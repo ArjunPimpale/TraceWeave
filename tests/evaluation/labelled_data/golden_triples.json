@@ -1,0 +1,96 @@
+[
+  {
+    "description": "R1: JWT authentication - explicitly implemented and validated",
+    "requirement": {
+      "entity_id": "R1-jwt-auth",
+      "text": "The system must implement JWT-based user authentication with token refresh."
+    },
+    "implementation": {
+      "entity_id": "impl-jwt-middleware",
+      "text": "auth_middleware.py implements JWT token validation, generation, and refresh logic. Fully implements Requirement R1.",
+      "linked_requirement": "R1-jwt-auth",
+      "source_document": "auth_middleware.py",
+      "source_type": "PYTHON"
+    },
+    "evaluation": {
+      "entity_id": "eval-jwt-auth",
+      "text": "The authentication module is well-implemented. JWT tokens are correctly validated and refresh logic is present. Score: 9/10.",
+      "linked_requirement": "R1-jwt-auth",
+      "source_document": "evaluator_report.pdf",
+      "source_type": "PDF"
+    },
+    "expected_status": "IMPLEMENTED_AND_VALIDATED",
+    "expected_confidence_min": 0.70,
+    "expected_rule": "exact_requirement_id_match"
+  },
+  {
+    "description": "R2: GNN training - implemented but with negative evaluation",
+    "requirement": {
+      "entity_id": "R2-gnn-training",
+      "text": "The system must implement a GNN training pipeline for anomaly detection supporting both supervised and unsupervised modes."
+    },
+    "implementation": {
+      "entity_id": "impl-gnn-train",
+      "text": "train_gnn.py implements the GNN training loop. Implements R2-gnn-training.",
+      "linked_requirement": "R2-gnn-training",
+      "source_document": "train_gnn.py",
+      "source_type": "PYTHON"
+    },
+    "evaluation": {
+      "entity_id": "eval-gnn-negative",
+      "text": "The GNN implementation is incomplete. Unsupervised mode is absent and the training loop lacks early stopping. Score: 4/10.",
+      "linked_requirement": "R2-gnn-training",
+      "source_document": "evaluator_report.pdf",
+      "source_type": "PDF"
+    },
+    "expected_status": "IMPLEMENTED_BUT_NEGATIVELY_EVALUATED",
+    "expected_confidence_min": 0.65,
+    "expected_rule": "exact_requirement_id_match"
+  },
+  {
+    "description": "R3: REST API - implemented without evaluation",
+    "requirement": {
+      "entity_id": "R3-rest-api",
+      "text": "The system must expose a REST API with endpoints for model inference."
+    },
+    "implementation": {
+      "entity_id": "impl-api-routes",
+      "text": "api/routes.py implements the REST API endpoints for model inference. References R3-rest-api.",
+      "linked_requirement": "R3-rest-api",
+      "source_document": "api/routes.py",
+      "source_type": "PYTHON"
+    },
+    "evaluation": null,
+    "expected_status": "IMPLEMENTED_WITHOUT_EVALUATION",
+    "expected_confidence_min": 0.60,
+    "expected_rule": "exact_requirement_id_match"
+  },
+  {
+    "description": "R4: Data preprocessing - not implemented (no evidence found)",
+    "requirement": {
+      "entity_id": "R4-data-preprocessing",
+      "text": "The system must implement a data preprocessing pipeline with normalization and augmentation."
+    },
+    "implementation": null,
+    "evaluation": null,
+    "expected_status": "REQUIREMENT_NOT_IMPLEMENTED",
+    "expected_confidence_min": 0.55,
+    "expected_rule": "requirement_with_no_evidence",
+    "retrieval_score": 0.05
+  },
+  {
+    "description": "EVAL-ORPHAN: Professor feedback without clear requirement link",
+    "requirement": null,
+    "implementation": null,
+    "evaluation": {
+      "entity_id": "eval-general-feedback",
+      "text": "Overall the project demonstrates good software engineering practices. The code quality is adequate.",
+      "linked_requirement": null,
+      "source_document": "evaluator_report.pdf",
+      "source_type": "PDF"
+    },
+    "expected_status": "EVALUATION_WITHOUT_REQUIREMENT",
+    "expected_confidence_min": 0.50,
+    "expected_rule": "orphan_evaluation"
+  }
+]
