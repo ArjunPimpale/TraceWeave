@@ -58,8 +58,31 @@ def _run_correlation(use_stage2: bool) -> None:
     """Run the full correlation pipeline."""
     with st.spinner("Running correlation pipeline…"):
         try:
+            from pecs.retrieval.pipeline import RetrievalPipeline
+            
+            repo = EvidenceRepo()
+            requirements = repo.get_all_requirements()
+            
+            # Step 1: Compute retrieval scores for each requirement
+            pipeline = RetrievalPipeline()
+            retrieval_scores: dict[str, float] = {}
+            
+            st.info("Fetching retrieval scores for requirements...")
+            for req in requirements:
+                req_text = req.get("text", "")
+                if not req_text:
+                    retrieval_scores[req["entity_id"]] = 0.0
+                    continue
+                    
+                results = pipeline.retrieve(query_text=req_text, top_k=3)
+                if results:
+                    retrieval_scores[req["entity_id"]] = max(r.combined_score for r in results)
+                else:
+                    retrieval_scores[req["entity_id"]] = 0.0
+
+            # Step 2: Build matrix with the scores
             builder = MatrixBuilder()
-            matrix = builder.build(use_stage2=use_stage2)
+            matrix = builder.build(retrieval_scores=retrieval_scores, use_stage2=use_stage2)
 
             st.success("✅ Correlation complete!")
 

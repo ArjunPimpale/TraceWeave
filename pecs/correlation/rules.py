@@ -53,7 +53,7 @@ NEGATIVE_SCORE_THRESHOLD = 5.0
 _SCORE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*/\s*10|Score:\s*(\d+(?:\.\d+)?)", re.IGNORECASE)
 
 # Min vector score for a requirement to have "found" evidence via retrieval
-MIN_RETRIEVAL_SCORE = 0.3
+MIN_RETRIEVAL_SCORE = 0.15
 
 
 # ── Module-level convenience wrappers (importable by tests) ───────────────────
@@ -172,30 +172,40 @@ class RuleEngine:
             has_any_impl = bool(impl_by_req.get(req_id))
             best_retrieval = retrieval_scores.get(req_id, 0.0)
 
-            if not has_any_impl and best_retrieval < MIN_RETRIEVAL_SCORE:
-                resolved.append(CorrelationResult(
-                    requirement_entity_id=req_id,
-                    evidence_entity_id="(none)",
-                    status=CorrelationStatus.REQUIREMENT_NOT_IMPLEMENTED,
-                    resolution_method="deterministic_rule",
-                    rule_name="requirement_with_no_evidence",
-                    confidence=0.85,
-                    supporting_chunk_ids=[],
-                    reasoning=(
-                        f"Rule 'requirement_with_no_evidence': "
-                        f"No linked implementation and no retrieval candidate "
-                        f"above threshold (best score: {best_retrieval:.2f})."
-                    ),
-                ))
-                resolved_req_ids.add(req_id)
-                logger.info(
-                    "Deterministic rule fired",
-                    extra={"context": {
-                        "requirement_id": req_id,
-                        "rule": "requirement_with_no_evidence",
-                        "status": "REQUIREMENT_NOT_IMPLEMENTED",
-                    }},
-                )
+            if not has_any_impl:
+                if best_retrieval < MIN_RETRIEVAL_SCORE:
+                    resolved.append(CorrelationResult(
+                        requirement_entity_id=req_id,
+                        evidence_entity_id="(none)",
+                        status=CorrelationStatus.REQUIREMENT_NOT_IMPLEMENTED,
+                        resolution_method="deterministic_rule",
+                        rule_name="requirement_with_no_evidence",
+                        confidence=0.85,
+                        supporting_chunk_ids=[],
+                        reasoning=(
+                            f"Rule 'requirement_with_no_evidence': "
+                            f"No linked implementation and no retrieval candidate "
+                            f"above threshold (best score: {best_retrieval:.2f})."
+                        ),
+                    ))
+                    resolved_req_ids.add(req_id)
+                    logger.info(
+                        "Deterministic rule fired",
+                        extra={"context": {
+                            "requirement_id": req_id,
+                            "rule": "requirement_with_no_evidence",
+                            "status": "REQUIREMENT_NOT_IMPLEMENTED",
+                        }},
+                    )
+                else:
+                    # Score is >= 0.15 — let Stage 2 decide based on retrieved chunk
+                    ambiguous.append({
+                        "type": "retrieved_evidence_ambiguous",
+                        "requirement": req,
+                        "evidence": None,  # Stage 2 will retrieve and inspect
+                        "hint": f"Retrieval found candidate evidence (score={best_retrieval:.2f}) but no explicit link.",
+                    })
+                    resolved_req_ids.add(req_id)  # Prevents Rule 6/unresolved from processing it again
 
         # ── Rule 3 & 4: implementation_plus_{positive|negative}_evaluation ──
         # Already handled in Rule 1 via _determine_status_with_evals.

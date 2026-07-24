@@ -109,6 +109,19 @@ class ExtractionValidator:
             try:
                 result = ExtractionResult.model_validate(item)
 
+                # ── Step 3.5: Quality filter ───────────────────────────────
+                if not self._quality_filter(result, source_document):
+                    logger.warning(
+                        "Extraction rejected by quality filter",
+                        extra={"context": {
+                            "chunk_id": chunk_id[:8],
+                            "entity_id": result.entity_id,
+                            "type": result.entity_type.value,
+                        }},
+                    )
+                    errors.append(f"Item {i} rejected: Failed quality checks (too short or vague).")
+                    continue
+
                 # ── Step 4: Semantic validation ────────────────────────────
                 if source_text:
                     overlap = self._word_overlap(result.text, source_text)
@@ -203,6 +216,19 @@ class ExtractionValidator:
 
         overlap = extracted_words & source_words
         return len(overlap) / len(extracted_words)
+
+    @staticmethod
+    def _quality_filter(result: ExtractionResult, source_document: str) -> bool:
+        """Return True if entity passes quality checks, False to discard."""
+        if result.entity_type.value == "REQUIREMENT":
+            # Reject very short requirements
+            if len(result.text.split()) < 10:
+                return False
+            # Reject vague requirements
+            vague_markers = ["should be", "could be", "maybe", "consider", "try to"]
+            if any(m in result.text.lower() for m in vague_markers):
+                return False
+        return True
 
     @staticmethod
     def format_errors_for_retry(errors: list[str]) -> str:

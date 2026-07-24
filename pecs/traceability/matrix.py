@@ -194,6 +194,23 @@ class MatrixBuilder:
 
         # ── Stage 2 LLM classification ────────────────────────────────────
         if use_stage2 and ambiguous:
+            from pecs.retrieval.pipeline import RetrievalPipeline
+            pipeline = RetrievalPipeline()
+            
+            # Enrich ambiguous pairs that lack evidence
+            for pair in ambiguous:
+                if pair.get("evidence") is None and pair.get("requirement"):
+                    req_text = pair["requirement"].get("text", "")
+                    if req_text:
+                        results = pipeline.retrieve(query_text=req_text, top_k=1)
+                        if results:
+                            pair["evidence"] = {
+                                "entity_id": f"retrieved-{results[0].chunk.chunk_id[:8]}",
+                                "entity_type": "IMPLEMENTATION",
+                                "text": results[0].chunk.normalized_text[:500],
+                                "chunk_id": results[0].chunk.chunk_id,
+                            }
+            
             logger.info(
                 "Stage 2 classification started",
                 extra={"context": {"ambiguous_pairs": len(ambiguous)}},

@@ -20,7 +20,7 @@ def valid_json_response():
         {
             "entity_type": "REQUIREMENT",
             "entity_id": "R1-auth",
-            "text": "The system must implement JWT authentication.",
+            "text": "The system must implement JWT authentication for all users across the entire platform securely.",
             "linked_requirement": None,
             "author": None,
             "timestamp": None,
@@ -63,7 +63,7 @@ class TestJSONParsing:
         single = json.dumps({
             "entity_type": "REQUIREMENT",
             "entity_id": "R1",
-            "text": "Auth requirement.",
+            "text": "The system must implement JWT authentication for all users across the entire platform securely.",
             "linked_requirement": None,
             "author": None,
             "timestamp": None,
@@ -113,7 +113,7 @@ class TestSchemaValidation:
         with_empty_link = json.dumps([{
             "entity_type": "REQUIREMENT",
             "entity_id": "R1",
-            "text": "Auth requirement.",
+            "text": "The system must implement JWT authentication for all users across the entire platform securely.",
             "linked_requirement": "",
             "author": None,
             "timestamp": None,
@@ -129,7 +129,7 @@ class TestHallucinationDetection:
         response = json.dumps([{
             "entity_type": "REQUIREMENT",
             "entity_id": "R1",
-            "text": "Quantum computing blockchain neural network.",  # No overlap
+            "text": "The quantum computing blockchain neural network will be integrated into the main database system.",  # No overlap
             "linked_requirement": None,
             "author": None,
             "timestamp": None,
@@ -146,11 +146,11 @@ class TestHallucinationDetection:
 
     def test_high_overlap_not_flagged(self, validator):
         """Text with good word overlap should NOT be flagged."""
-        source = "The system must implement JWT authentication for all users."
+        source = "The system must implement JWT authentication for all users across the entire platform securely."
         response = json.dumps([{
             "entity_type": "REQUIREMENT",
             "entity_id": "R1",
-            "text": "System must implement JWT authentication for users.",
+            "text": "The system must implement JWT authentication for all users across the entire platform securely.",
             "linked_requirement": None,
             "author": None,
             "timestamp": None,
