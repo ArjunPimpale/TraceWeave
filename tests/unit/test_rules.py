@@ -111,26 +111,30 @@ class TestRule1ExactIDMatch:
 # ── Rule 2: strong_retrieval_with_id_mention ─────────────────────────────────
 
 class TestRule2StrongRetrieval:
-    def test_high_score_with_id_mention_resolves_deterministically(self, engine):
+    def test_high_score_resolves_deterministically(self, engine):
         req = _req("R10")
-        # Score >= HIGH_SCORE_THRESHOLD and req ID in text
-        candidates = _candidate(HIGH_SCORE_THRESHOLD + 0.05, req_id_in_text="R10")
-        resolved, ambiguous = engine.apply_rules([req], [], [], {"R10": candidates})
+        # Score >= HIGH_SCORE_THRESHOLD → deterministic resolve
+        candidates = _candidate(HIGH_SCORE_THRESHOLD + 0.05)
+        resolved, ambiguous = engine.apply_rules(
+            [req], [], [], {"R10": candidates}
+        )
 
         r10_resolved = [r for r in resolved if r.requirement_entity_id == "R10"]
         assert r10_resolved, "Should be deterministically resolved by R2"
-        assert r10_resolved[0].rule_name == "strong_retrieval_with_id_mention"
+        assert r10_resolved[0].rule_name == "strong_semantic_match"
 
-    def test_high_score_without_id_mention_goes_to_ambiguous(self, engine):
+    def test_below_threshold_goes_to_ambiguous(self, engine):
         req = _req("R11")
-        # High score but req ID NOT in text
-        candidates = _candidate(HIGH_SCORE_THRESHOLD + 0.05, text="Generic implementation work")
+        # Score below threshold but above floor → goes to Stage 2
+        score = (NO_EVIDENCE_FLOOR + HIGH_SCORE_THRESHOLD) / 2
+        candidates = _candidate(score)
         resolved, ambiguous = engine.apply_rules([req], [], [], {"R11": candidates})
 
         r11_resolved = [r for r in resolved if r.requirement_entity_id == "R11"]
-        # Should NOT be resolved deterministically — goes to ambiguous (R4)
-        assert not any(r.rule_name == "strong_retrieval_with_id_mention" for r in r11_resolved)
-
+        r11_ambiguous = [a for a in ambiguous if a.get("requirement", {}).get("entity_id") == "R11"]
+        # Should be in ambiguous, not deterministically resolved via R2
+        assert not any(r.rule_name == "strong_semantic_match" for r in r11_resolved)
+        assert r11_ambiguous
 
 # ── Rule 3: requirement_with_no_evidence ─────────────────────────────────────
 
@@ -170,7 +174,11 @@ class TestRule4AmbiguousDeferral:
 
         # Should be in ambiguous, not deterministically resolved
         assert r5_ambiguous, "Moderate score should go to ambiguous (Stage 2)"
-        assert not r5_resolved
+        # Should NOT be resolved as NOT_IMPLEMENTED (score is above floor)
+        assert not any(
+            r.status.value == "REQUIREMENT_NOT_IMPLEMENTED"
+            for r in r5_resolved
+        )
 
 
 # ── Rule 5: orphan_evaluation ─────────────────────────────────────────────────

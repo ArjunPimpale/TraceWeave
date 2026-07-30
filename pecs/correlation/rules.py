@@ -72,8 +72,11 @@ _SCORE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*/\s*10|Score:\s*(\d+(?:\.\d+)?)"
 NEGATIVE_SCORE_THRESHOLD = 5.0
 
 # Retrieval thresholds
-HIGH_SCORE_THRESHOLD = 0.70   # R2: deterministic resolve if score >= this
-NO_EVIDENCE_FLOOR = 0.15      # R3: not-implemented if score < this
+# R2: deterministic resolve if top score >= this (semantic match alone is enough;
+# we do NOT require the literal req ID in the text because IDs like
+# 'R1-gnn-exam-proctoring-system-design' are never literally in chunk text)
+HIGH_SCORE_THRESHOLD = 0.75   # High confidence semantic match → resolve directly
+NO_EVIDENCE_FLOOR = 0.30      # Below this → NOT_IMPLEMENTED; between floor and HIGH → LLM
 
 
 # ── Module-level convenience wrappers (importable by tests) ───────────────────
@@ -193,10 +196,11 @@ class RuleEngine:
                 }},
             )
 
-        # ── Rule 2: strong_retrieval_with_id_mention ──────────────────────────
+        # ── Rule 2: strong_semantic_match ────────────────────────────────────
         # Resolves requirements where the top retrieved chunk has a very high
-        # similarity score AND literally mentions the requirement ID.
-        # This is the evidence-first path — no metadata dependency.
+        # semantic similarity score. The req ID does NOT need to appear literally
+        # in the text — IDs like 'R1-gnn-exam-proctoring-system-design' are
+        # never embedded verbatim into evidence chunks.
         for req in requirements:
             req_id = req["entity_id"]
             if req_id in resolved_req_ids:
@@ -210,35 +214,26 @@ class RuleEngine:
             if best.combined_score < HIGH_SCORE_THRESHOLD:
                 continue
 
-            # Check if the req ID appears literally in the chunk text
-            chunk_text = best.chunk.normalized_text
-            if req_id.lower() not in chunk_text.lower():
-                # Also check prefix variants: "R3" → "r3", "req-3", etc.
-                num_match = re.search(r"(\d+)", req_id)
-                num = num_match.group(1) if num_match else ""
-                aliases = [f"req-{num}", f"req_{num}", f"requirement {num}"] if num else []
-                if not any(a in chunk_text.lower() for a in aliases):
-                    # Strong score but no ID mention → defer to LLM (R4 will handle)
-                    continue
-
             # Enrich status with any linked evaluations
             linked_evals = eval_by_req.get(req_id, [])
             status = self._determine_status_with_evals(linked_evals)
-            chunk_ids = [best.chunk.chunk_id] + [e["chunk_id"] for e in linked_evals]
+            # Use all high-quality candidates as supporting chunks
+            high_quality = [c for c in candidates if c.combined_score >= HIGH_SCORE_THRESHOLD]
+            chunk_ids = [c.chunk.chunk_id for c in high_quality] + [e["chunk_id"] for e in linked_evals]
 
             resolved.append(CorrelationResult(
                 requirement_entity_id=req_id,
                 evidence_entity_id=best.chunk.chunk_id,
                 status=status,
                 resolution_method="deterministic_rule",
-                rule_name="strong_retrieval_with_id_mention",
+                rule_name="strong_semantic_match",
                 confidence=round(min(best.combined_score, 1.0), 4),
                 supporting_chunk_ids=chunk_ids,
                 reasoning=(
-                    f"Rule 'strong_retrieval_with_id_mention': "
-                    f"Retrieved chunk from '{best.chunk.source_document}' with score "
-                    f"{best.combined_score:.2f} explicitly mentions {req_id}. "
-                    f"Status: {status.value}."
+                    f"Rule 'strong_semantic_match': "
+                    f"Top retrieved chunk from '{best.chunk.source_document}' "
+                    f"has similarity score {best.combined_score:.2f} (>= {HIGH_SCORE_THRESHOLD}). "
+                    f"{len(high_quality)} high-quality chunk(s). Status: {status.value}."
                 ),
             ))
             resolved_req_ids.add(req_id)
@@ -246,7 +241,7 @@ class RuleEngine:
                 "Deterministic rule fired",
                 extra={"context": {
                     "requirement_id": req_id,
-                    "rule": "strong_retrieval_with_id_mention",
+                    "rule": "strong_semantic_match",
                     "score": round(best.combined_score, 3),
                     "status": status.value,
                 }},
