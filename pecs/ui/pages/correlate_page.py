@@ -1,17 +1,23 @@
 """
 Correlate page — runs the full correlation pipeline.
 
-1. Rule engine (deterministic)
-2. Stage 2 LLM classifier (ambiguous pairs)
-3. Confidence scoring
-4. Stores results in SQLite
+Pipeline:
+1. Load requirements from SQLite
+2. Run retrieval pipeline to get top-K evidence candidates per requirement
+3. Rule engine (deterministic, evidence-first)
+4. Stage 2 LLM classifier (ambiguous pairs with real evidence)
+5. Confidence scoring with real retrieval scores
+6. Store results in SQLite
 """
 
 from __future__ import annotations
 
 import streamlit as st
 
+from pecs.embeddings.embedder import Embedder
 from pecs.logging_config import get_logger
+from pecs.models.retrieved_evidence import RetrievedEvidence
+from pecs.retrieval.pipeline import RetrievalPipeline
 from pecs.store.evidence_repo import EvidenceRepo
 from pecs.traceability.matrix import MatrixBuilder
 
@@ -55,11 +61,54 @@ def render() -> None:
 
 
 def _run_correlation(use_stage2: bool) -> None:
-    """Run the full correlation pipeline."""
+    """Run the full correlation pipeline with retrieval wired in."""
     with st.spinner("Running correlation pipeline…"):
         try:
+            repo = EvidenceRepo()
+            requirements = repo.get_all_requirements()
+
+            if not requirements:
+                st.warning("No requirements to correlate.")
+                return
+
+            # ── Step 1: Run retrieval pipeline for each requirement ────────
+            retrieval_candidates: dict[str, list[RetrievedEvidence]] = {}
+
+            with st.spinner(f"Retrieving evidence for {len(requirements)} requirements…"):
+                pipeline = RetrievalPipeline()
+                for req in requirements:
+                    req_id = req["entity_id"]
+                    req_text = req.get("text", "")
+                    if not req_text:
+                        continue
+                    try:
+                        candidates = pipeline.retrieve(
+                            query_text=req_text,
+                            requirement_ids=[req_id],
+                            top_k=10,  # Retrieve top-10; rules will filter further
+                        )
+                        if candidates:
+                            retrieval_candidates[req_id] = candidates
+                    except Exception as exc:
+                        logger.warning(
+                            "Retrieval failed for requirement",
+                            extra={"context": {"req_id": req_id, "error": str(exc)}},
+                        )
+
+            logger.info(
+                "Retrieval complete",
+                extra={"context": {
+                    "requirements_retrieved": len(retrieval_candidates),
+                    "total_requirements": len(requirements),
+                }},
+            )
+
+            # ── Step 2: Build traceability matrix ─────────────────────────
             builder = MatrixBuilder()
-            matrix = builder.build(use_stage2=use_stage2)
+            matrix = builder.build(
+                retrieval_candidates=retrieval_candidates,
+                use_stage2=use_stage2,
+            )
 
             st.success("✅ Correlation complete!")
 
@@ -73,6 +122,11 @@ def _run_correlation(use_stage2: bool) -> None:
             st.subheader("Status Distribution")
             for status, count in matrix.status_distribution.items():
                 st.text(f"  {status}: {count}")
+
+            # Resolution method breakdown
+            det_count = matrix.summary.get("deterministic_resolved", 0)
+            llm_count = matrix.summary.get("llm_resolved", 0)
+            st.caption(f"Resolved: {det_count} deterministic · {llm_count} via LLM")
 
             st.session_state.matrix_built = True
             st.session_state.last_matrix = matrix

@@ -5,7 +5,14 @@ Aggregates correlations from SQLite into a structured matrix where:
 - Rows: Requirements
 - Columns: Status, Confidence, Evidence count, Supporting sources, Reasoning
 
-Also builds per-requirement citation lists and the summary statistics.
+Full pipeline:
+1. Load all requirements, implementations, evaluations from SQLite.
+2. Run retrieval pipeline to get top-K evidence candidates per requirement.
+3. Run deterministic rule engine (evidence-first).
+4. Run Stage 2 LLM classifier on ambiguous pairs with real evidence.
+5. Score confidence using real retrieval scores.
+6. Store in SQLite.
+7. Build and return TraceabilityMatrix.
 """
 
 from __future__ import annotations
@@ -19,6 +26,7 @@ from pecs.correlation.rules import RuleEngine
 from pecs.correlation.stage2 import Stage2Classifier
 from pecs.logging_config import get_logger
 from pecs.models.correlation_result import CorrelationResult, CorrelationStatus
+from pecs.models.retrieved_evidence import RetrievedEvidence
 from pecs.store.correlation_repo import CorrelationRepo
 from pecs.store.evidence_repo import EvidenceRepo
 
@@ -119,15 +127,7 @@ class TraceabilityMatrix:
 
 class MatrixBuilder:
     """
-    Builds the traceability matrix from SQLite data.
-
-    Full pipeline:
-    1. Load all requirements, implementations, evaluations from SQLite.
-    2. Run deterministic rule engine.
-    3. Run Stage 2 LLM classifier on ambiguous pairs.
-    4. Score confidence for all correlations.
-    5. Store in SQLite.
-    6. Build and return TraceabilityMatrix.
+    Builds the traceability matrix from SQLite data + retrieval pipeline.
     """
 
     def __init__(
@@ -146,23 +146,37 @@ class MatrixBuilder:
 
     def build(
         self,
-        retrieval_scores: dict[str, float] | None = None,
+        retrieval_candidates: dict[str, list[RetrievedEvidence]] | None = None,
         use_stage2: bool = True,
     ) -> TraceabilityMatrix:
         """
         Build the complete traceability matrix.
 
         Args:
-            retrieval_scores: Dict mapping requirement_entity_id → best retrieval score.
-                              Used by the confidence scorer.
+            retrieval_candidates: Dict mapping requirement_entity_id → top-K
+                                  RetrievedEvidence from the vector store.
+                                  If None, the pipeline runs without retrieval context
+                                  (rules will fall back to metadata-only mode).
             use_stage2: If False, only deterministic rules are applied.
 
         Returns:
             TraceabilityMatrix with all rows and statistics.
         """
-        retrieval_scores = retrieval_scores or {}
+        retrieval_candidates = retrieval_candidates or {}
 
-        logger.info("Traceability matrix build started")
+        # Build flat retrieval_scores dict for the confidence scorer fallback
+        retrieval_scores: dict[str, float] = {
+            req_id: candidates[0].combined_score
+            for req_id, candidates in retrieval_candidates.items()
+            if candidates
+        }
+
+        logger.info(
+            "Traceability matrix build started",
+            extra={"context": {
+                "requirements_with_retrieval": len(retrieval_candidates),
+            }},
+        )
 
         # ── Load evidence ─────────────────────────────────────────────────
         requirements = self._evidence_repo.get_all_requirements()
@@ -184,12 +198,12 @@ class MatrixBuilder:
                 summary={"warning": "No requirements found in evidence store."}
             )
 
-        # ── Deterministic rules ───────────────────────────────────────────
+        # ── Deterministic rules (evidence-first) ─────────────────────────
         resolved, ambiguous = self._rules.apply_rules(
             requirements=requirements,
             implementations=implementations,
             evaluations=evaluations,
-            retrieval_scores=retrieval_scores,
+            retrieval_candidates=retrieval_candidates,
         )
 
         # ── Stage 2 LLM classification ────────────────────────────────────
@@ -208,6 +222,7 @@ class MatrixBuilder:
             correlations=resolved,
             retrieval_scores=retrieval_scores,
             all_evidence=all_evidence,
+            retrieval_candidates=retrieval_candidates,
         )
 
         # ── Store in SQLite ───────────────────────────────────────────────
@@ -218,6 +233,7 @@ class MatrixBuilder:
             requirements=requirements,
             correlations=scored_correlations,
             all_evidence=all_evidence,
+            retrieval_candidates=retrieval_candidates,
         )
 
         logger.info(
@@ -235,14 +251,12 @@ class MatrixBuilder:
     def load_latest(self) -> TraceabilityMatrix:
         """
         Load the most recent traceability matrix from SQLite.
-
         Returns the existing matrix without re-running the pipeline.
         """
         requirements = self._evidence_repo.get_all_requirements()
         all_evidence = self._evidence_repo.get_all()
         correlations_raw = self._correlation_repo.get_all_latest()
 
-        # Convert raw dicts to CorrelationResult objects
         correlations: list[CorrelationResult] = []
         for row in correlations_raw:
             try:
@@ -269,6 +283,7 @@ class MatrixBuilder:
             requirements=requirements,
             correlations=correlations,
             all_evidence=all_evidence,
+            retrieval_candidates={},
         )
 
     def _build_matrix_from_correlations(
@@ -276,10 +291,11 @@ class MatrixBuilder:
         requirements: list[dict[str, Any]],
         correlations: list[CorrelationResult],
         all_evidence: list[dict[str, Any]],
+        retrieval_candidates: dict[str, list[RetrievedEvidence]],
     ) -> TraceabilityMatrix:
         """Build TraceabilityMatrix from requirements + correlations."""
 
-        # Build lookup: requirement_entity_id → correlation
+        # Build lookup: requirement_entity_id → best correlation
         corr_by_req: dict[str, CorrelationResult] = {}
         for corr in correlations:
             req_id = corr.requirement_entity_id
@@ -312,14 +328,21 @@ class MatrixBuilder:
                 reasoning = corr.reasoning
                 resolution_method = corr.resolution_method
 
-            # Get source documents from supporting chunks
+            # Get source documents from supporting chunk IDs
             source_docs = list(set(
                 chunk_to_evidence[cid].get("source_document", "")
                 for cid in supporting_chunks
                 if cid in chunk_to_evidence
             ))
 
-            evidence_count = len(supporting_chunks)
+            # Also include source documents from retrieval candidates
+            candidates = retrieval_candidates.get(req_id, [])
+            for c in candidates[:3]:
+                doc = c.chunk.source_document
+                if doc and doc not in source_docs:
+                    source_docs.append(doc)
+
+            evidence_count = max(len(supporting_chunks), len(candidates))
 
             for doc in source_docs:
                 per_source_coverage[doc] = per_source_coverage.get(doc, 0) + 1
@@ -339,7 +362,6 @@ class MatrixBuilder:
                 color=STATUS_COLORS.get(status, "#6b7280"),
             ))
 
-        # Sort by requirement_id
         rows.sort(key=lambda r: r.requirement_id)
 
         implemented = sum(
