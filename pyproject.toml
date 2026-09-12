@@ -23,6 +23,10 @@ dependencies = [
     "markitdown[all]",
     # BM25 keyword retrieval
     "rank-bm25>=0.2",
+    # Graph database driver
+    "neo4j>=5.0",
+    # Interactive graph visualization
+    "pyvis>=0.3",
     # Testing
     "pytest>=7.0",
     "pytest-mock",

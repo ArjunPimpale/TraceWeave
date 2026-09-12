@@ -132,6 +132,30 @@ def _run_correlation(use_stage2: bool) -> None:
             st.session_state.last_matrix = matrix
             st.info("Navigate to 📊 Traceability Matrix to view the full results.")
 
+            # ── Auto-sync graph (non-blocking) ────────────────────────────
+            from pecs.config import settings as _cfg
+            if _cfg.NEO4J_ENABLED:
+                try:
+                    from pecs.graph.graph_sync import GraphSync
+                    with st.spinner("Syncing evidence graph…"):
+                        sync_result = GraphSync().sync_graph()
+                    if sync_result.success:
+                        st.success(
+                            f"🕸️ Graph synced: {sync_result.nodes_created} nodes, "
+                            f"{sync_result.relationships_created} relationships"
+                        )
+                        st.session_state.graph_synced = True
+                        st.session_state.graph_sync_result = sync_result.to_dict()
+                    else:
+                        st.warning(
+                            f"⚠️ Graph sync failed (non-blocking): {sync_result.error}"
+                        )
+                except Exception as graph_exc:
+                    st.warning(
+                        f"⚠️ Graph sync skipped (Neo4j unavailable): {graph_exc}"
+                    )
+
         except Exception as exc:
             st.error(f"Correlation pipeline failed: {exc}")
             logger.error("Correlation pipeline error", extra={"context": {"error": str(exc)}})
+

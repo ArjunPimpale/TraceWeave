@@ -28,6 +28,7 @@ from pecs.ui.pages import (
     correlate_page,
     matrix_page,
     explore_page,
+    graph_page,
     settings_page,
 )
 
@@ -51,6 +52,8 @@ def main() -> None:
         correlate_page.render()
     elif page == "matrix":
         matrix_page.render()
+    elif page == "graph":
+        graph_page.render()
     elif page == "explore":
         explore_page.render()
     elif page == "settings":
@@ -68,6 +71,14 @@ def _init_session_state() -> None:
         "matrix_built": False,
         "last_matrix": None,
         "query_results": [],
+        # Graph page state
+        "selected_graph_node": None,
+        "graph_synced": False,
+        "graph_sync_result": None,
+        "graph_view_mode": "Requirement focus",
+        "graph_show_evaluations": True,
+        "graph_show_source_docs": False,
+        "graph_show_orphans": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:

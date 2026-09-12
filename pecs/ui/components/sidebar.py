@@ -42,6 +42,7 @@ def render_sidebar() -> str:
             ("🔬 Extract Evidence", "extract"),
             ("🔗 Correlate", "correlate"),
             ("📊 Traceability Matrix", "matrix"),
+            ("🕸️ Evidence Graph", "graph"),
             ("🔎 Explore Evidence", "explore"),
             ("⚙️ Settings & Status", "settings"),
         ]
@@ -102,3 +103,19 @@ def _render_status() -> None:
         st.info(f"🗄️ Evidence rows: {ev_count:,}")
     except Exception:
         st.warning("🗄️ Evidence: N/A")
+
+    # Neo4j graph status
+    from pecs.config import settings
+    if settings.NEO4J_ENABLED:
+        try:
+            from pecs.graph.neo4j_client import get_neo4j_client
+            client = get_neo4j_client()
+            if client.check_health():
+                node_count = client.get_node_count()
+                st.success(f"🕸️ Graph: {node_count:,} nodes")
+            else:
+                st.warning("🕸️ Graph: Offline")
+        except Exception:
+            st.warning("🕸️ Graph: N/A")
+    else:
+        st.caption("🕸️ Graph: disabled")

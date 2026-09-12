@@ -54,15 +54,15 @@ def render() -> None:
 
 
 def _run_extraction(repo: EvidenceRepo) -> None:
-    """Run Stage 1 extraction on all ChromaDB chunks."""
+    """Run Stage 1 extraction on all ChromaDB chunks using concurrent workers."""
     from pecs.vectorstore.chroma_store import ChromaStore
     from pecs.models.evidence_chunk import EvidenceChunk, SourceType
+    from pecs.config import settings
 
     chroma = ChromaStore()
     extractor = Extractor()
 
     # Get all chunks from ChromaDB
-    # We query with empty text (get all)
     total = chroma.count()
     if total == 0:
         st.warning("No chunks to extract.")
@@ -94,25 +94,50 @@ def _run_extraction(repo: EvidenceRepo) -> None:
             char_count=len(doc_text),
         ))
 
-    st.info(f"Extracting from {len(chunks)} chunks…")
+    n_workers = settings.EXTRACTION_WORKERS
+    st.info(
+        f"Extracting from **{len(chunks)} chunks** using **{n_workers} parallel workers**…"
+    )
     progress = st.progress(0, text="Starting extraction…")
+    status_text = st.empty()
+
     total_extracted = 0
     total_stored = 0
+    # Lock protects the Streamlit UI widgets which must only be updated from
+    # the main thread. on_progress is invoked inside as_completed() which runs
+    # on the calling (main) thread, so no lock is strictly required — but we
+    # keep one for safety if Streamlit's internals ever change.
+    progress_lock = __import__("threading").Lock()
 
-    for i, chunk in enumerate(chunks):
-        progress.progress(
-            (i + 1) / len(chunks),
-            text=f"Chunk {i + 1}/{len(chunks)}: {chunk.source_document}",
-        )
-        results = extractor.extract_chunk(chunk)
-        total_extracted += len(results)
-        stored_ids = repo.insert_batch(results)
+    def on_progress(completed: int, total_chunks: int, source_doc: str) -> None:
+        """Called by extract_batch_concurrent after each chunk completes."""
+        with progress_lock:
+            pct = completed / total_chunks
+            progress.progress(pct, text=f"Chunk {completed}/{total_chunks} — {source_doc}")
+
+    # ── Concurrent extraction ─────────────────────────────────────────────────
+    all_results = extractor.extract_batch_concurrent(
+        chunks,
+        max_workers=n_workers,
+        on_progress=on_progress,
+    )
+
+    # ── SQLite writes — main thread only ──────────────────────────────────────
+    # Writing to SQLite from the main thread after extraction is complete is the
+    # safest approach. SQLite connections are not thread-safe by default, and
+    # WAL mode only helps concurrent *reads*, not concurrent writes.
+    status_text.info("💾 Storing extracted evidence…")
+    for chunk_results in all_results.values():
+        total_extracted += len(chunk_results)
+        stored_ids = repo.insert_batch(chunk_results)
         total_stored += len(stored_ids)
 
     progress.progress(1.0, text="✅ Extraction complete!")
+    status_text.empty()
     st.success(
         f"Extracted **{total_extracted}** entities, stored **{total_stored}** new rows "
-        f"({total_extracted - total_stored} already existed)."
+        f"({total_extracted - total_stored} already existed). "
+        f"Used **{n_workers} parallel workers**."
     )
     st.session_state.extraction_complete = True
 

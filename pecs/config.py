@@ -42,8 +42,9 @@ class PecsSettings(BaseSettings):
     RETRIEVAL_TOP_K: int = 10
     BM25_TOP_K: int = 10
 
-    # ── Extraction ──────────────────────────────────────────────────────────
+    # ── Extraction ──────────────────────────────────────────────────────────────
     MAX_EXTRACTION_RETRIES: int = 3
+    EXTRACTION_WORKERS: int = 4  # Concurrent threads for LLM extraction (tune to Ollama parallelism)
 
     # ── Scoring weights (retrieval merging) ─────────────────────────────────
     VECTOR_WEIGHT: float = 0.7
@@ -74,6 +75,14 @@ class PecsSettings(BaseSettings):
 
     # ── Hallucination detection ───────────────────────────────────────────────
     MIN_WORD_OVERLAP_RATIO: float = 0.30
+
+    # ── Neo4j graph database ─────────────────────────────────────────────────
+    # Local Community Edition — no authentication by default.
+    # Set NEO4J_ENABLED=false to run PECS without Neo4j installed.
+    NEO4J_URI: str = "neo4j://localhost:7687"
+    NEO4J_DATABASE: str = "neo4j"
+    NEO4J_ENABLED: bool = True
+    # EXTENSION POINT: Add NEO4J_USER / NEO4J_PASSWORD here when auth is needed.
 
     model_config = SettingsConfigDict(
         env_file=".env",
