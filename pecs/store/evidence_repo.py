@@ -14,10 +14,33 @@ import sqlite3
 from typing import Any
 
 from pecs.logging_config import get_logger
-from pecs.models.extraction_result import ExtractionResult, EntityType
+from pecs.models.extraction_result import ExtractionResult
 from pecs.store.database import Database, get_database
 
 logger = get_logger(__name__)
+
+
+_INSERT_EVIDENCE_SQL = """
+    INSERT INTO evidence
+        (entity_type, entity_id, text, linked_requirement,
+         source_document, chunk_id, author, timestamp, metadata)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+
+def _insert_params(result: ExtractionResult) -> tuple[Any, ...]:
+    """Return the evidence-table values in the schema's insertion order."""
+    return (
+        result.entity_type.value,
+        result.entity_id,
+        result.text,
+        result.linked_requirement,
+        result.source_document,
+        result.chunk_id,
+        result.author,
+        result.timestamp,
+        json.dumps(result.metadata) if result.metadata else None,
+    )
 
 
 class EvidenceRepo:
@@ -60,26 +83,7 @@ class EvidenceRepo:
             )
             return None
 
-        sql = """
-            INSERT INTO evidence
-                (entity_type, entity_id, text, linked_requirement,
-                 source_document, chunk_id, author, timestamp, metadata)
-            VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-        params = (
-            result.entity_type.value,
-            result.entity_id,
-            result.text,
-            result.linked_requirement,
-            result.source_document,
-            result.chunk_id,
-            result.author,
-            result.timestamp,
-            json.dumps(result.metadata) if result.metadata else None,
-        )
-
-        cursor = self._conn.execute(sql, params)
+        cursor = self._conn.execute(_INSERT_EVIDENCE_SQL, _insert_params(result))
         self._conn.commit()
         row_id = cursor.lastrowid
         logger.debug(
@@ -111,25 +115,8 @@ class EvidenceRepo:
                     result.entity_id, result.chunk_id, result.entity_type.value
                 ):
                     continue
-                sql = """
-                    INSERT INTO evidence
-                        (entity_type, entity_id, text, linked_requirement,
-                         source_document, chunk_id, author, timestamp, metadata)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """
                 cursor = self._conn.execute(
-                    sql,
-                    (
-                        result.entity_type.value,
-                        result.entity_id,
-                        result.text,
-                        result.linked_requirement,
-                        result.source_document,
-                        result.chunk_id,
-                        result.author,
-                        result.timestamp,
-                        json.dumps(result.metadata) if result.metadata else None,
-                    ),
+                    _INSERT_EVIDENCE_SQL, _insert_params(result)
                 )
                 if cursor.lastrowid:
                     inserted_ids.append(cursor.lastrowid)

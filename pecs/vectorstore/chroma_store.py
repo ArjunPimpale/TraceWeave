@@ -164,6 +164,10 @@ class ChromaStore:
         except Exception:
             return 0
 
+    def count_strict(self) -> int:
+        """Return a count or raise, so outage is distinct from empty search."""
+        return self._get_collection().count()
+
     def get_by_ids(self, chunk_ids: list[str]) -> dict[str, Any]:
         """Retrieve specific chunks by their IDs."""
         collection = self._get_collection()
@@ -171,6 +175,10 @@ class ChromaStore:
             ids=chunk_ids,
             include=["documents", "metadatas"],
         )
+
+    def get_all_records(self) -> dict[str, Any]:
+        """Retrieve all stored chunk IDs, documents, and metadata records."""
+        return self._get_collection().get(include=["documents", "metadatas"])
 
     def delete_by_source(self, source_document: str) -> None:
         """

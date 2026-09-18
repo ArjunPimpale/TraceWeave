@@ -1,3 +1,10 @@
+# Historical PECS Implementation Plan
+
+> **Status:** Archived planning material. The implementation, tests, and current
+> README are authoritative for present behavior. See the
+> [architecture guide](../architecture.md) for the implemented flow and known
+> documentation differences.
+
 # PECS — Complete Implementation Plan
 
 > **Document version**: 0.1-PLAN · **Baseline**: TSD v0.3 (Hybrid Baseline) + finalized architecture overrides  

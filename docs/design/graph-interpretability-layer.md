@@ -1,5 +1,10 @@
 # Neo4j Graph Interpretability Layer for PECS
 
+> **Status:** Superseded historical Neo4j/Pyvis proposal. The current design is
+> specified in the [graph visualization revamp plan](../graph-visualization-revamp-plan.md).
+> The application now uses SQLite traceability runs and a local canvas. The
+> Neo4j-specific instructions below are retained only as history.
+
 ## Background
 
 PECS currently produces a traceability matrix by extracting entities (Requirements, Implementations, Evaluations) into SQLite via Stage 1 LLM extraction, then correlating them through a deterministic rule engine and Stage 2 LLM classifier. The result is a flat list of `CorrelationResult` rows linking requirements to evidence.
@@ -74,11 +79,11 @@ The graph schema is derived directly from the three data structures that exist i
 
 | PECS Data Source | Neo4j Node Type | Identity Key | Source |
 |---|---|---|---|
-| `evidence` table rows where `entity_type = 'REQUIREMENT'` | `:Requirement` | `entity_id` | [evidence_repo.py](file:///home/arjun/Arjun/AnderBahar/LocalRAG/pecs/store/evidence_repo.py#L173-L175) |
-| `evidence` table rows where `entity_type = 'IMPLEMENTATION'` | `:Implementation` | `entity_id` | [evidence_repo.py](file:///home/arjun/Arjun/AnderBahar/LocalRAG/pecs/store/evidence_repo.py#L177-L179) |
-| `evidence` table rows where `entity_type = 'EVALUATION'` | `:Evaluation` | `entity_id` | [evidence_repo.py](file:///home/arjun/Arjun/AnderBahar/LocalRAG/pecs/store/evidence_repo.py#L181-L183) |
-| Distinct `source_document` values from `evidence` table | `:SourceDocument` | `name` (filename) | [ExtractionResult.source_document](file:///home/arjun/Arjun/AnderBahar/LocalRAG/pecs/models/extraction_result.py#L59) |
-| `correlation` table rows (latest per requirement) | Relationship: `CORRELATES_TO` | `correlation_id` | [correlation_repo.py](file:///home/arjun/Arjun/AnderBahar/LocalRAG/pecs/store/correlation_repo.py#L153-L173) |
+| `evidence` table rows where `entity_type = 'REQUIREMENT'` | `:Requirement` | `entity_id` | [evidence_repo.py](../../pecs/store/evidence_repo.py#L173-L175) |
+| `evidence` table rows where `entity_type = 'IMPLEMENTATION'` | `:Implementation` | `entity_id` | [evidence_repo.py](../../pecs/store/evidence_repo.py#L177-L179) |
+| `evidence` table rows where `entity_type = 'EVALUATION'` | `:Evaluation` | `entity_id` | [evidence_repo.py](../../pecs/store/evidence_repo.py#L181-L183) |
+| Distinct `source_document` values from `evidence` table | `:SourceDocument` | `name` (filename) | [ExtractionResult.source_document](../../pecs/models/extraction_result.py#L59) |
+| `correlation` table rows (latest per requirement) | Relationship: `CORRELATES_TO` | `correlation_id` | [correlation_repo.py](../../pecs/store/correlation_repo.py#L153-L173) |
 
 ---
 
@@ -343,7 +348,7 @@ Orchestrates the sync between SQLite and Neo4j.
 
 **Sync trigger options:**
 - **Manual:** "🔄 Sync Graph" button on the Graph page
-- **Automatic:** After the correlation pipeline completes (hook into `_run_correlation` in [correlate_page.py](file:///home/arjun/Arjun/AnderBahar/LocalRAG/pecs/ui/pages/correlate_page.py#L63))
+- **Automatic:** After the correlation pipeline completes (hook into `_run_correlation` in [correlate_page.py](../../pecs/ui/pages/correlate_page.py#L63))
 
 **Sync operation (atomic):**
 
@@ -375,7 +380,7 @@ def sync_graph(self) -> GraphSyncResult:
 
 ### Configuration
 
-#### [MODIFY] [config.py](file:///home/arjun/Arjun/AnderBahar/LocalRAG/pecs/config.py)
+#### [MODIFY] [config.py](../../pecs/config.py)
 
 Add Neo4j configuration fields to `PecsSettings`:
 
@@ -407,7 +412,7 @@ NEO4J_ENABLED=true
 
 ### Dependencies
 
-#### [MODIFY] [pyproject.toml](file:///home/arjun/Arjun/AnderBahar/LocalRAG/pyproject.toml)
+#### [MODIFY] [pyproject.toml](../../pyproject.toml)
 
 Add:
 ```toml
@@ -537,7 +542,7 @@ pyvis supports `selectNode` events via JavaScript callbacks. The plan is to:
 
 ---
 
-#### [MODIFY] [sidebar.py](file:///home/arjun/Arjun/AnderBahar/LocalRAG/pecs/ui/components/sidebar.py)
+#### [MODIFY] [sidebar.py](../../pecs/ui/components/sidebar.py)
 
 Add the graph page to the navigation and add Neo4j status to the system status section.
 
@@ -562,7 +567,7 @@ if settings.NEO4J_ENABLED:
         st.warning("🕸️ Graph: Error")
 ```
 
-#### [MODIFY] [app.py](file:///home/arjun/Arjun/AnderBahar/LocalRAG/pecs/app.py)
+#### [MODIFY] [app.py](../../pecs/app.py)
 
 Add graph page import and routing:
 ```python
@@ -579,7 +584,7 @@ Add session state default:
 "graph_synced": False,
 ```
 
-#### [MODIFY] [correlate_page.py](file:///home/arjun/Arjun/AnderBahar/LocalRAG/pecs/ui/pages/correlate_page.py)
+#### [MODIFY] [correlate_page.py](../../pecs/ui/pages/correlate_page.py)
 
 After correlation completes successfully (line ~132), trigger graph sync if Neo4j is enabled:
 
@@ -660,14 +665,14 @@ This chain is complete and auditable without any additional data.
 Correlation metadata flows directly from `CorrelationResult` properties onto `CORRELATES_TO` relationship properties:
 
 - `status` → one of the 7 `CorrelationStatus` labels
-- `confidence` → float 0.0–1.0 from [confidence.py](file:///home/arjun/Arjun/AnderBahar/LocalRAG/pecs/correlation/confidence.py)
+- `confidence` → float 0.0–1.0 from [confidence.py](../../pecs/correlation/confidence.py)
 - `resolution_method` → `"deterministic_rule"` or `"llm_stage2"`
 - `rule_name` → e.g., `"exact_requirement_id_match"` (null for LLM-resolved)
 - `reasoning` → justification text
 
 **Visual encoding:**
 - Edge thickness proportional to confidence score
-- Edge color determined by status (green/yellow/red palette matching [STATUS_COLORS](file:///home/arjun/Arjun/AnderBahar/LocalRAG/pecs/traceability/matrix.py#L36-L44))
+- Edge color determined by status (green/yellow/red palette matching [STATUS_COLORS](../../pecs/traceability/matrix.py#L36-L44))
 - Tooltip shows full metadata on hover
 
 ---
@@ -697,7 +702,7 @@ The full rebuild runs inside a single Neo4j transaction. If any MERGE fails, the
 
 ### Logging
 
-All graph operations use the existing PECS logging pattern ([logging_config.py](file:///home/arjun/Arjun/AnderBahar/LocalRAG/pecs/logging_config.py)):
+All graph operations use the existing PECS logging pattern ([logging_config.py](../../pecs/logging_config.py)):
 
 ```python
 from pecs.logging_config import get_logger
@@ -795,10 +800,11 @@ For > 500 nodes, pyvis/vis.js can become sluggish. The ego-network approach (sho
 
 ```bash
 # Unit tests (no Neo4j required)
-pytest tests/unit/test_graph_builder.py tests/unit/test_graph_queries.py -v
+uv run --locked pytest tests/unit/test_graph_builder.py tests/unit/test_graph_queries.py -v
 
-# Integration tests (requires Neo4j running)
-pytest tests/integration/test_graph_sync.py -v -m integration
+# Integration tests (requires explicit disposable Neo4j target)
+uv run --locked pytest tests/integration -v -m integration --run-neo4j \
+  --neo4j-test-uri bolt://localhost:17687
 ```
 
 ### Manual Verification

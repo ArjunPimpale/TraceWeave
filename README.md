@@ -32,7 +32,7 @@ Evidence Sources → Ingestion → Parsing → Chunking → Normalization → Em
 
 1. Install dependencies:
    ```bash
-   uv pip install -e .
+   uv sync --locked
    ```
 
 2. Copy `.env.example` to `.env` and configure:
@@ -49,8 +49,27 @@ Evidence Sources → Ingestion → Parsing → Chunking → Normalization → Em
 
 4. Run the application:
    ```bash
-   streamlit run pecs/app.py
+   uv run --locked streamlit run pecs/app.py
    ```
+
+## Testing
+
+```bash
+uv run --locked pytest tests/unit -q
+```
+
+The Evidence Graph uses saved SQLite traceability runs and needs no graph server.
+See [testing guidance](docs/testing.md).
+
+## Documentation
+
+- [Architecture guide](docs/architecture.md) describes the implemented PECS flow
+  and records where historical design material differs from current code.
+- [Technical specification](docs/specifications/TSD_v0.3.docx) is the v0.3
+  historical specification.
+- [Graph revamp plan](docs/graph-visualization-revamp-plan.md) describes the
+  traceability model. The [old graph design](docs/design/graph-interpretability-layer.md)
+  is retained as history.
 
 ## Project Structure
 

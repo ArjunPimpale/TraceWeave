@@ -223,15 +223,8 @@ class Ingestor:
                 "Parsing failed",
                 extra={"context": {"filename": filename, "error": str(exc)}},
             )
-            self._repo.log_ingestion(filename, file_hash, len(file_bytes),
-                                      source_type.value, 0, "failed", str(exc))
-            return IngestionResult(
-                success=False,
-                filename=filename,
-                file_hash=file_hash,
-                source_type=source_type.value,
-                chunk_count=0,
-                error=f"Parsing failed: {exc}",
+            return self._processing_failure_result(
+                filename, file_hash, file_bytes, source_type, "Parsing", exc
             )
 
         warnings = parsed_doc.parse_warnings.copy()
@@ -245,16 +238,8 @@ class Ingestor:
                 "Chunking failed",
                 extra={"context": {"filename": filename, "error": str(exc)}},
             )
-            self._repo.log_ingestion(filename, file_hash, len(file_bytes),
-                                      source_type.value, 0, "failed", str(exc))
-            return IngestionResult(
-                success=False,
-                filename=filename,
-                file_hash=file_hash,
-                source_type=source_type.value,
-                chunk_count=0,
-                error=f"Chunking failed: {exc}",
-                warnings=warnings,
+            return self._processing_failure_result(
+                filename, file_hash, file_bytes, source_type, "Chunking", exc, warnings
             )
 
         # ── Step 6: Normalize ─────────────────────────────────────────────
@@ -291,6 +276,36 @@ class Ingestor:
             chunk_count=len(evidence_chunks),
             warnings=warnings,
             evidence_chunks=evidence_chunks,
+        )
+
+    def _processing_failure_result(
+        self,
+        filename: str,
+        file_hash: str,
+        file_bytes: bytes,
+        source_type: SourceType,
+        stage: str,
+        error: Exception,
+        warnings: list[str] | None = None,
+    ) -> IngestionResult:
+        """Log a parse or chunk failure and return its existing result shape."""
+        self._repo.log_ingestion(
+            filename,
+            file_hash,
+            len(file_bytes),
+            source_type.value,
+            0,
+            "failed",
+            str(error),
+        )
+        return IngestionResult(
+            success=False,
+            filename=filename,
+            file_hash=file_hash,
+            source_type=source_type.value,
+            chunk_count=0,
+            error=f"{stage} failed: {error}",
+            warnings=warnings,
         )
 
     def _resolve_source_type(

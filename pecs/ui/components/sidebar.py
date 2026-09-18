@@ -104,18 +104,9 @@ def _render_status() -> None:
     except Exception:
         st.warning("🗄️ Evidence: N/A")
 
-    # Neo4j graph status
-    from pecs.config import settings
-    if settings.NEO4J_ENABLED:
-        try:
-            from pecs.graph.neo4j_client import get_neo4j_client
-            client = get_neo4j_client()
-            if client.check_health():
-                node_count = client.get_node_count()
-                st.success(f"🕸️ Graph: {node_count:,} nodes")
-            else:
-                st.warning("🕸️ Graph: Offline")
-        except Exception:
-            st.warning("🕸️ Graph: N/A")
-    else:
-        st.caption("🕸️ Graph: disabled")
+    try:
+        from pecs.traceability.reader import TraceabilityReader
+        runs = TraceabilityReader().list_snapshots()
+        st.info(f"🕸️ Traceability runs: {len(runs)}")
+    except Exception:
+        st.warning("🕸️ Traceability: N/A")

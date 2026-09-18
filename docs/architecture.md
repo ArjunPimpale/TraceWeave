@@ -1,4 +1,49 @@
-# PECS Internals: A Comprehensive Engineering Guide
+# PECS Architecture and Engineering Guide
+
+> **Current implementation note:** This guide explains the intended PECS design.
+> The source code and tests are authoritative when they differ. In particular,
+> ingestion normalizes parsed text before the UI embeds and persists chunks;
+> extraction processes chunks stored in ChromaDB; requirement-driven retrieval
+> happens during correlation; and the current normalizer applies Unicode and
+> whitespace cleanup without calling MarkItDown's conversion API. The SQLite
+> implementation uses `evidence`, `correlation`, and `ingestion_log` tables.
+> See the [refactoring plan](refactor-plan.md) for the documented differences.
+
+> **Current graph architecture:** Correlation saves immutable run records,
+> typed participant references, retrieval candidates, and citation snapshots in
+> SQLite. Matrix and Evidence Graph read the same run through
+> `pecs.traceability.reader.TraceabilityReader`. `pecs.graph.projection` and
+> `pecs.graph.views` build bounded views for a locally bundled Cytoscape canvas.
+> Neo4j and Pyvis are no longer application dependencies. See the
+> [graph revamp plan](graph-visualization-revamp-plan.md) for detailed contracts.
+
+## Saved traceability and graph views
+
+`MatrixBuilder.build()` applies the existing deterministic rules before
+optional Stage 2 and retains the existing confidence formula. `TraceabilityService`
+records each decision's requirement evidence row and the extracted rows or
+source chunks it actually used. Candidate chunks remain distinct from
+assessment context. Run insertion and old correlation rows commit in one
+SQLite transaction. A retrieval outage is a workflow failure where no explicit
+evidence resolves the requirement, not proof of missing implementation.
+
+Normalized source text and provenance are saved with the run so citations can
+be inspected when Chroma or Ollama is offline. A legacy view reads old
+correlations conservatively and can explicitly recover available source context
+from Chroma. Evidence row IDs and original chunk IDs remain unchanged; display
+labels are never join keys.
+
+Graph edges distinguish extracted references, classifier input, rule-selected
+context, retrieved candidates and provenance. Aggregate status and confidence
+belong to an assessment rather than each evidence edge. Focus, Compare and
+Unlinked evidence views provide bounded navigation. Matrix “View trace” links
+to the same selected run. The Graph filters requirements by status and score,
+relationships by kind, and evidence by source. Source groups reveal additional
+members in 20-item increments, and full-text evidence search can inspect items
+outside the current canvas limit.
+Moving from evidence to an associated requirement records the prior Graph view,
+so Back restores its filters and selection. Canvas selections highlight the
+selected item and its direct connections without a layout reset.
 
 Welcome to this deep dive into **PECS** (Project Evidence Correlation System). You are reading this because you want to master the architecture, design decisions, and data flow of this local-first, privacy-preserving traceability engine. 
 

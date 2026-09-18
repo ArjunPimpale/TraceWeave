@@ -139,269 +139,25 @@ class RuleEngine:
         resolved: list[CorrelationResult] = []
         resolved_req_ids: set[str] = set()
         ambiguous: list[dict[str, Any]] = []
+        impl_by_req = self._index_by_linked_requirement(implementations)
+        eval_by_req = self._index_by_linked_requirement(evaluations)
 
-        # Build lookup maps from explicitly extracted evidence
-        impl_by_req: dict[str, list[dict]] = {}
-        eval_by_req: dict[str, list[dict]] = {}
-
-        for impl in implementations:
-            linked = impl.get("linked_requirement")
-            if linked:
-                impl_by_req.setdefault(linked, []).append(impl)
-
-        for ev in evaluations:
-            linked = ev.get("linked_requirement")
-            if linked:
-                eval_by_req.setdefault(linked, []).append(ev)
-
-        # ── Rule 1: exact_requirement_id_match ────────────────────────────────
-        # Resolves requirements where the LLM extraction explicitly linked
-        # an IMPLEMENTATION row to this requirement via linked_requirement.
-        for req in requirements:
-            req_id = req["entity_id"]
-            linked_impls = impl_by_req.get(req_id, [])
-            linked_evals = eval_by_req.get(req_id, [])
-
-            if not linked_impls:
-                continue
-
-            status = self._determine_status_with_evals(linked_evals)
-            chunk_ids = [i["chunk_id"] for i in linked_impls] + [e["chunk_id"] for e in linked_evals]
-
-            # Use the best retrieval score for this requirement if available
-            candidates = retrieval_candidates.get(req_id, [])
-            best_score = candidates[0].combined_score if candidates else 0.85
-
-            resolved.append(CorrelationResult(
-                requirement_entity_id=req_id,
-                evidence_entity_id=linked_impls[0]["entity_id"],
-                status=status,
-                resolution_method="deterministic_rule",
-                rule_name="exact_requirement_id_match",
-                confidence=0.95 if linked_evals else 0.85,
-                supporting_chunk_ids=chunk_ids,
-                reasoning=(
-                    f"Rule 'exact_requirement_id_match': "
-                    f"{len(linked_impls)} implementation(s) explicitly link to {req_id}. "
-                    f"Status determined by evaluation sentiment: {status.value}."
-                ),
-            ))
-            resolved_req_ids.add(req_id)
-            logger.info(
-                "Deterministic rule fired",
-                extra={"context": {
-                    "requirement_id": req_id,
-                    "rule": "exact_requirement_id_match",
-                    "status": status.value,
-                }},
-            )
-
-        # ── Rule 2: strong_semantic_match ────────────────────────────────────
-        # Resolves requirements where the top retrieved chunk has a very high
-        # semantic similarity score. The req ID does NOT need to appear literally
-        # in the text — IDs like 'R1-gnn-exam-proctoring-system-design' are
-        # never embedded verbatim into evidence chunks.
-        for req in requirements:
-            req_id = req["entity_id"]
-            if req_id in resolved_req_ids:
-                continue
-
-            candidates = retrieval_candidates.get(req_id, [])
-            if not candidates:
-                continue
-
-            best = candidates[0]
-            if best.combined_score < HIGH_SCORE_THRESHOLD:
-                continue
-
-            # Enrich status with any linked evaluations
-            linked_evals = eval_by_req.get(req_id, [])
-            status = self._determine_status_with_evals(linked_evals)
-            # Use all high-quality candidates as supporting chunks
-            high_quality = [c for c in candidates if c.combined_score >= HIGH_SCORE_THRESHOLD]
-            chunk_ids = [c.chunk.chunk_id for c in high_quality] + [e["chunk_id"] for e in linked_evals]
-
-            resolved.append(CorrelationResult(
-                requirement_entity_id=req_id,
-                evidence_entity_id=best.chunk.chunk_id,
-                status=status,
-                resolution_method="deterministic_rule",
-                rule_name="strong_semantic_match",
-                confidence=round(min(best.combined_score, 1.0), 4),
-                supporting_chunk_ids=chunk_ids,
-                reasoning=(
-                    f"Rule 'strong_semantic_match': "
-                    f"Top retrieved chunk from '{best.chunk.source_document}' "
-                    f"has similarity score {best.combined_score:.2f} (>= {HIGH_SCORE_THRESHOLD}). "
-                    f"{len(high_quality)} high-quality chunk(s). Status: {status.value}."
-                ),
-            ))
-            resolved_req_ids.add(req_id)
-            logger.info(
-                "Deterministic rule fired",
-                extra={"context": {
-                    "requirement_id": req_id,
-                    "rule": "strong_semantic_match",
-                    "score": round(best.combined_score, 3),
-                    "status": status.value,
-                }},
-            )
-
-        # ── Rule 3: requirement_with_no_evidence ──────────────────────────────
-        # Resolves requirements where there is zero explicit linkage AND the
-        # vector store returned nothing useful (score below floor).
-        for req in requirements:
-            req_id = req["entity_id"]
-            if req_id in resolved_req_ids:
-                continue
-
-            has_any_impl = bool(impl_by_req.get(req_id))
-            candidates = retrieval_candidates.get(req_id, [])
-            best_score = candidates[0].combined_score if candidates else 0.0
-
-            if not has_any_impl and best_score < NO_EVIDENCE_FLOOR:
-                resolved.append(CorrelationResult(
-                    requirement_entity_id=req_id,
-                    evidence_entity_id="(none)",
-                    status=CorrelationStatus.REQUIREMENT_NOT_IMPLEMENTED,
-                    resolution_method="deterministic_rule",
-                    rule_name="requirement_with_no_evidence",
-                    confidence=0.80,
-                    supporting_chunk_ids=[],
-                    reasoning=(
-                        f"Rule 'requirement_with_no_evidence': "
-                        f"No linked implementation and no retrieval candidate "
-                        f"above floor (best score: {best_score:.2f} < {NO_EVIDENCE_FLOOR})."
-                    ),
-                ))
-                resolved_req_ids.add(req_id)
-                logger.info(
-                    "Deterministic rule fired",
-                    extra={"context": {
-                        "requirement_id": req_id,
-                        "rule": "requirement_with_no_evidence",
-                        "best_score": round(best_score, 3),
-                    }},
-                )
-
-        # ── Rule 4: ambiguous_with_retrieval_evidence → Stage 2 LLM ──────────
-        # Requirements with plausible retrieval evidence but not strong enough
-        # to resolve deterministically. Send requirement + top candidates to LLM.
-        for req in requirements:
-            req_id = req["entity_id"]
-            if req_id in resolved_req_ids:
-                continue
-
-            candidates = retrieval_candidates.get(req_id, [])
-            # Include all candidates above the floor; send at most top 5
-            useful_candidates = [c for c in candidates if c.combined_score >= NO_EVIDENCE_FLOOR][:5]
-
-            if useful_candidates:
-                # Also include any linked evaluations as context
-                linked_evals = eval_by_req.get(req_id, [])
-                ambiguous.append({
-                    "type": "ambiguous_with_retrieval_evidence",
-                    "requirement": req,
-                    "evidence": None,  # Stage 2 uses retrieval_candidates instead
-                    "retrieval_candidates": useful_candidates,
-                    "linked_evaluations": linked_evals,
-                    "hint": (
-                        f"Top retrieval score: {useful_candidates[0].combined_score:.2f}. "
-                        f"Classify whether these chunks implement the requirement. "
-                        f"Consider partial implementation, verbal claims, or missing evidence."
-                    ),
-                })
-                logger.info(
-                    "Deferred to Stage 2",
-                    extra={"context": {
-                        "requirement_id": req_id,
-                        "rule": "ambiguous_with_retrieval_evidence",
-                        "candidate_count": len(useful_candidates),
-                        "top_score": round(useful_candidates[0].combined_score, 3),
-                    }},
-                )
-            else:
-                # No candidates above floor and not yet resolved → NOT_IMPLEMENTED
-                resolved.append(CorrelationResult(
-                    requirement_entity_id=req_id,
-                    evidence_entity_id="(none)",
-                    status=CorrelationStatus.REQUIREMENT_NOT_IMPLEMENTED,
-                    resolution_method="deterministic_rule",
-                    rule_name="requirement_with_no_evidence",
-                    confidence=0.75,
-                    supporting_chunk_ids=[],
-                    reasoning=(
-                        f"Rule 'requirement_with_no_evidence' (fallback): "
-                        f"No retrieval candidates above floor for {req_id}."
-                    ),
-                ))
-                resolved_req_ids.add(req_id)
-
-        # ── Rule 5: orphan_evaluation ─────────────────────────────────────────
-        # Evaluations that have no linked_requirement. Mark as orphan or
-        # defer to LLM if there is a plausible keyword match.
-        for ev in evaluations:
-            linked_req = ev.get("linked_requirement")
-            if linked_req:
-                continue  # Already attached to a requirement
-
-            matched_req = self._find_matching_req(ev.get("text", ""), requirements)
-            if not matched_req:
-                resolved.append(CorrelationResult(
-                    requirement_entity_id="(unlinked)",
-                    evidence_entity_id=ev["entity_id"],
-                    status=CorrelationStatus.EVALUATION_WITHOUT_REQUIREMENT,
-                    resolution_method="deterministic_rule",
-                    rule_name="orphan_evaluation",
-                    confidence=0.80,
-                    supporting_chunk_ids=[ev["chunk_id"]],
-                    reasoning=(
-                        f"Rule 'orphan_evaluation': "
-                        f"Evaluation '{ev['entity_id']}' has no linked requirement "
-                        f"and no keyword-matching requirement was found."
-                    ),
-                ))
-                logger.info(
-                    "Deterministic rule fired",
-                    extra={"context": {
-                        "evidence_id": ev["entity_id"],
-                        "rule": "orphan_evaluation",
-                        "status": "EVALUATION_WITHOUT_REQUIREMENT",
-                    }},
-                )
-            else:
-                # Possible match — let Stage 2 decide
-                ambiguous.append({
-                    "type": "orphan_evaluation_with_candidate_req",
-                    "requirement": matched_req,
-                    "evidence": ev,
-                    "retrieval_candidates": [],
-                    "linked_evaluations": [],
-                    "hint": "Evaluation evidence with possible requirement match but not explicitly linked.",
-                })
-
-        # ── Rule 6: verbal_claim_without_evidence → Stage 2 LLM ──────────────
-        # IMPLEMENTATION rows from conversational sources that contain claim
-        # markers — these may not reflect concrete code/work. Send to LLM.
-        for impl in implementations:
-            if not self._is_claim_without_concrete_evidence(impl):
-                continue
-
-            req_id = impl.get("linked_requirement") or "(unknown)"
-            req = next((r for r in requirements if r["entity_id"] == req_id), None)
-            candidates = retrieval_candidates.get(req_id, [])[:3] if req_id != "(unknown)" else []
-
-            ambiguous.append({
-                "type": "verbal_claim_without_evidence",
-                "requirement": req,
-                "evidence": impl,
-                "retrieval_candidates": candidates,
-                "linked_evaluations": [],
-                "hint": (
-                    "Implementation claim from conversational source — verify if "
-                    "concrete evidence exists in retrieved chunks."
-                ),
-            })
+        # Keep the six passes in their original order: each pass relies on the
+        # requirement IDs resolved by the preceding passes.
+        self._apply_exact_requirement_matches(
+            requirements, impl_by_req, eval_by_req, resolved, resolved_req_ids
+        )
+        self._apply_strong_semantic_matches(
+            requirements, eval_by_req, retrieval_candidates, resolved, resolved_req_ids
+        )
+        self._apply_no_evidence_matches(
+            requirements, impl_by_req, retrieval_candidates, resolved, resolved_req_ids
+        )
+        self._collect_ambiguous_retrieval_matches(
+            requirements, eval_by_req, retrieval_candidates, resolved, resolved_req_ids, ambiguous
+        )
+        self._apply_orphan_evaluations(requirements, evaluations, resolved, ambiguous)
+        self._collect_verbal_claims(requirements, implementations, retrieval_candidates, ambiguous)
 
         logger.info(
             "Rule engine complete",
@@ -415,6 +171,312 @@ class RuleEngine:
         return resolved, ambiguous
 
     # ── Helpers ───────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _index_by_linked_requirement(
+        evidence: list[dict[str, Any]],
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Group evidence by its explicitly extracted requirement link."""
+        indexed: dict[str, list[dict[str, Any]]] = {}
+        for item in evidence:
+            linked_requirement = item.get("linked_requirement")
+            if linked_requirement:
+                indexed.setdefault(linked_requirement, []).append(item)
+        return indexed
+
+    def _apply_exact_requirement_matches(
+        self,
+        requirements: list[dict[str, Any]],
+        implementations: dict[str, list[dict[str, Any]]],
+        evaluations: dict[str, list[dict[str, Any]]],
+        resolved: list[CorrelationResult],
+        resolved_ids: set[str],
+    ) -> None:
+        """Apply rule 1 for explicit implementation-to-requirement links."""
+        for requirement in requirements:
+            requirement_id = requirement["entity_id"]
+            linked_implementations = implementations.get(requirement_id, [])
+            linked_evaluations = evaluations.get(requirement_id, [])
+            if not linked_implementations:
+                continue
+            status = self._determine_status_with_evals(linked_evaluations)
+            chunk_ids = [item["chunk_id"] for item in linked_implementations]
+            chunk_ids += [item["chunk_id"] for item in linked_evaluations]
+            resolved.append(
+                CorrelationResult(
+                    requirement_entity_id=requirement_id,
+                    evidence_entity_id=linked_implementations[0]["entity_id"],
+                    status=status,
+                    resolution_method="deterministic_rule",
+                    rule_name="exact_requirement_id_match",
+                    confidence=0.95 if linked_evaluations else 0.85,
+                    supporting_chunk_ids=chunk_ids,
+                    reasoning=(
+                        f"Rule 'exact_requirement_id_match': "
+                        f"{len(linked_implementations)} implementation(s) explicitly link to {requirement_id}. "
+                        f"Status determined by evaluation sentiment: {status.value}."
+                    ),
+                )
+            )
+            resolved_ids.add(requirement_id)
+            logger.info(
+                "Deterministic rule fired",
+                extra={"context": {
+                    "requirement_id": requirement_id,
+                    "rule": "exact_requirement_id_match",
+                    "status": status.value,
+                }},
+            )
+
+    def _apply_strong_semantic_matches(
+        self,
+        requirements: list[dict[str, Any]],
+        evaluations: dict[str, list[dict[str, Any]]],
+        retrieval_candidates: dict[str, list[RetrievedEvidence]],
+        resolved: list[CorrelationResult],
+        resolved_ids: set[str],
+    ) -> None:
+        """Apply rule 2 to unresolved requirements with strong retrieval."""
+        for requirement in requirements:
+            requirement_id = requirement["entity_id"]
+            if requirement_id in resolved_ids:
+                continue
+            candidates = retrieval_candidates.get(requirement_id, [])
+            if not candidates:
+                continue
+            best = candidates[0]
+            if best.combined_score < HIGH_SCORE_THRESHOLD:
+                continue
+            linked_evaluations = evaluations.get(requirement_id, [])
+            status = self._determine_status_with_evals(linked_evaluations)
+            high_quality = [
+                candidate
+                for candidate in candidates
+                if candidate.combined_score >= HIGH_SCORE_THRESHOLD
+            ]
+            chunk_ids = [candidate.chunk.chunk_id for candidate in high_quality]
+            chunk_ids += [item["chunk_id"] for item in linked_evaluations]
+            resolved.append(
+                CorrelationResult(
+                    requirement_entity_id=requirement_id,
+                    evidence_entity_id=best.chunk.chunk_id,
+                    status=status,
+                    resolution_method="deterministic_rule",
+                    rule_name="strong_semantic_match",
+                    confidence=round(min(best.combined_score, 1.0), 4),
+                    supporting_chunk_ids=chunk_ids,
+                    reasoning=(
+                        f"Rule 'strong_semantic_match': "
+                        f"Top retrieved chunk from '{best.chunk.source_document}' "
+                        f"has similarity score {best.combined_score:.2f} (>= {HIGH_SCORE_THRESHOLD}). "
+                        f"{len(high_quality)} high-quality chunk(s). Status: {status.value}."
+                    ),
+                )
+            )
+            resolved_ids.add(requirement_id)
+            logger.info(
+                "Deterministic rule fired",
+                extra={"context": {
+                    "requirement_id": requirement_id,
+                    "rule": "strong_semantic_match",
+                    "score": round(best.combined_score, 3),
+                    "status": status.value,
+                }},
+            )
+
+    @staticmethod
+    def _append_no_evidence_result(
+        requirement_id: str,
+        confidence: float,
+        reasoning: str,
+        resolved: list[CorrelationResult],
+        resolved_ids: set[str],
+    ) -> None:
+        """Append the existing deterministic no-evidence correlation result."""
+        resolved.append(
+            CorrelationResult(
+                requirement_entity_id=requirement_id,
+                evidence_entity_id="(none)",
+                status=CorrelationStatus.REQUIREMENT_NOT_IMPLEMENTED,
+                resolution_method="deterministic_rule",
+                rule_name="requirement_with_no_evidence",
+                confidence=confidence,
+                supporting_chunk_ids=[],
+                reasoning=reasoning,
+            )
+        )
+        resolved_ids.add(requirement_id)
+
+    def _apply_no_evidence_matches(
+        self,
+        requirements: list[dict[str, Any]],
+        implementations: dict[str, list[dict[str, Any]]],
+        retrieval_candidates: dict[str, list[RetrievedEvidence]],
+        resolved: list[CorrelationResult],
+        resolved_ids: set[str],
+    ) -> None:
+        """Apply rule 3 to unresolved requirements below the retrieval floor."""
+        for requirement in requirements:
+            requirement_id = requirement["entity_id"]
+            if requirement_id in resolved_ids:
+                continue
+            candidates = retrieval_candidates.get(requirement_id, [])
+            best_score = candidates[0].combined_score if candidates else 0.0
+            if implementations.get(requirement_id) or best_score >= NO_EVIDENCE_FLOOR:
+                continue
+            self._append_no_evidence_result(
+                requirement_id,
+                0.80,
+                (
+                    f"Rule 'requirement_with_no_evidence': No linked implementation "
+                    f"and no retrieval candidate above floor (best score: {best_score:.2f} "
+                    f"< {NO_EVIDENCE_FLOOR})."
+                ),
+                resolved,
+                resolved_ids,
+            )
+            logger.info(
+                "Deterministic rule fired",
+                extra={"context": {
+                    "requirement_id": requirement_id,
+                    "rule": "requirement_with_no_evidence",
+                    "best_score": round(best_score, 3),
+                }},
+            )
+
+    def _collect_ambiguous_retrieval_matches(
+        self,
+        requirements: list[dict[str, Any]],
+        evaluations: dict[str, list[dict[str, Any]]],
+        retrieval_candidates: dict[str, list[RetrievedEvidence]],
+        resolved: list[CorrelationResult],
+        resolved_ids: set[str],
+        ambiguous: list[dict[str, Any]],
+    ) -> None:
+        """Apply rule 4, retaining its fallback for unresolved requirements."""
+        for requirement in requirements:
+            requirement_id = requirement["entity_id"]
+            if requirement_id in resolved_ids:
+                continue
+            candidates = retrieval_candidates.get(requirement_id, [])
+            useful_candidates = [
+                candidate
+                for candidate in candidates
+                if candidate.combined_score >= NO_EVIDENCE_FLOOR
+            ][:5]
+            if useful_candidates:
+                ambiguous.append({
+                    "type": "ambiguous_with_retrieval_evidence",
+                    "requirement": requirement,
+                    "evidence": None,
+                    "retrieval_candidates": useful_candidates,
+                    "linked_evaluations": evaluations.get(requirement_id, []),
+                    "hint": (
+                        f"Top retrieval score: {useful_candidates[0].combined_score:.2f}. "
+                        f"Classify whether these chunks implement the requirement. "
+                        f"Consider partial implementation, verbal claims, or missing evidence."
+                    ),
+                })
+                logger.info(
+                    "Deferred to Stage 2",
+                    extra={"context": {
+                        "requirement_id": requirement_id,
+                        "rule": "ambiguous_with_retrieval_evidence",
+                        "candidate_count": len(useful_candidates),
+                        "top_score": round(useful_candidates[0].combined_score, 3),
+                    }},
+                )
+                continue
+            self._append_no_evidence_result(
+                requirement_id,
+                0.75,
+                (
+                    f"Rule 'requirement_with_no_evidence' (fallback): "
+                    f"No retrieval candidates above floor for {requirement_id}."
+                ),
+                resolved,
+                resolved_ids,
+            )
+
+    def _apply_orphan_evaluations(
+        self,
+        requirements: list[dict[str, Any]],
+        evaluations: list[dict[str, Any]],
+        resolved: list[CorrelationResult],
+        ambiguous: list[dict[str, Any]],
+    ) -> None:
+        """Apply rule 5 to unlinked evaluations."""
+        for evaluation in evaluations:
+            if evaluation.get("linked_requirement"):
+                continue
+            matched_requirement = self._find_matching_req(
+                evaluation.get("text", ""), requirements
+            )
+            if matched_requirement:
+                ambiguous.append({
+                    "type": "orphan_evaluation_with_candidate_req",
+                    "requirement": matched_requirement,
+                    "evidence": evaluation,
+                    "retrieval_candidates": [],
+                    "linked_evaluations": [],
+                    "hint": "Evaluation evidence with possible requirement match but not explicitly linked.",
+                })
+                continue
+            resolved.append(
+                CorrelationResult(
+                    requirement_entity_id="(unlinked)",
+                    evidence_entity_id=evaluation["entity_id"],
+                    status=CorrelationStatus.EVALUATION_WITHOUT_REQUIREMENT,
+                    resolution_method="deterministic_rule",
+                    rule_name="orphan_evaluation",
+                    confidence=0.80,
+                    supporting_chunk_ids=[evaluation["chunk_id"]],
+                    reasoning=(
+                        f"Rule 'orphan_evaluation': Evaluation '{evaluation['entity_id']}' "
+                        f"has no linked requirement and no keyword-matching requirement was found."
+                    ),
+                )
+            )
+            logger.info(
+                "Deterministic rule fired",
+                extra={"context": {
+                    "evidence_id": evaluation["entity_id"],
+                    "rule": "orphan_evaluation",
+                    "status": "EVALUATION_WITHOUT_REQUIREMENT",
+                }},
+            )
+
+    def _collect_verbal_claims(
+        self,
+        requirements: list[dict[str, Any]],
+        implementations: list[dict[str, Any]],
+        retrieval_candidates: dict[str, list[RetrievedEvidence]],
+        ambiguous: list[dict[str, Any]],
+    ) -> None:
+        """Apply rule 6 to conversational implementation claims."""
+        for implementation in implementations:
+            if not self._is_claim_without_concrete_evidence(implementation):
+                continue
+            requirement_id = implementation.get("linked_requirement") or "(unknown)"
+            requirement = next(
+                (item for item in requirements if item["entity_id"] == requirement_id), None
+            )
+            candidates = (
+                retrieval_candidates.get(requirement_id, [])[:3]
+                if requirement_id != "(unknown)"
+                else []
+            )
+            ambiguous.append({
+                "type": "verbal_claim_without_evidence",
+                "requirement": requirement,
+                "evidence": implementation,
+                "retrieval_candidates": candidates,
+                "linked_evaluations": [],
+                "hint": (
+                    "Implementation claim from conversational source — verify if "
+                    "concrete evidence exists in retrieved chunks."
+                ),
+            })
 
     def _determine_status_with_evals(
         self, evaluations: list[dict[str, Any]]

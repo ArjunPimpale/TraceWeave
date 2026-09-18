@@ -21,7 +21,7 @@ from __future__ import annotations
 import concurrent.futures
 import threading
 import time
-from typing import Any, Callable
+from typing import Callable
 
 from pecs.config import settings
 from pecs.extraction.prompts import (
@@ -34,7 +34,7 @@ from pecs.extraction.prompts import (
 from pecs.extraction.validator import ExtractionValidator
 from pecs.logging_config import get_logger
 from pecs.models.evidence_chunk import EvidenceChunk
-from pecs.models.extraction_result import ExtractionResult  # noqa: F401 — re-exported
+from pecs.models.extraction_result import ExtractionResult
 
 logger = get_logger(__name__)
 
@@ -93,7 +93,7 @@ class Extractor:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def extract_chunk(self, chunk: EvidenceChunk) -> list[Any]:
+    def extract_chunk(self, chunk: EvidenceChunk) -> list[ExtractionResult]:
         """
         Extract structured entities from a single EvidenceChunk.
 
@@ -109,7 +109,7 @@ class Extractor:
         """
         return self._extract_with_client(chunk, self._client)
 
-    def extract_batch(self, chunks: list[EvidenceChunk]) -> dict[str, list[Any]]:
+    def extract_batch(self, chunks: list[EvidenceChunk]) -> dict[str, list[ExtractionResult]]:
         """
         Extract entities from multiple chunks sequentially (original behaviour).
 
@@ -119,7 +119,7 @@ class Extractor:
         Returns:
             Dict mapping chunk_id → list of ExtractionResult objects.
         """
-        results: dict[str, list[Any]] = {}
+        results: dict[str, list[ExtractionResult]] = {}
         for chunk in chunks:
             results[chunk.chunk_id] = self.extract_chunk(chunk)
         return results
@@ -129,7 +129,7 @@ class Extractor:
         chunks: list[EvidenceChunk],
         max_workers: int | None = None,
         on_progress: Callable[[int, int, str], None] | None = None,
-    ) -> dict[str, list[Any]]:
+    ) -> dict[str, list[ExtractionResult]]:
         """
         Extract entities from multiple chunks concurrently using a thread pool.
 
@@ -157,7 +157,7 @@ class Extractor:
 
         max_workers = max_workers or settings.EXTRACTION_WORKERS
         total = len(chunks)
-        results: dict[str, list[Any]] = {}
+        results: dict[str, list[ExtractionResult]] = {}
         completed_count = 0
 
         logger.info(
@@ -215,7 +215,7 @@ class Extractor:
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
-    def _extract_chunk_thread_safe(self, chunk: EvidenceChunk) -> list[Any]:
+    def _extract_chunk_thread_safe(self, chunk: EvidenceChunk) -> list[ExtractionResult]:
         """
         Thread-safe extraction using a per-thread Ollama client.
 
@@ -226,7 +226,7 @@ class Extractor:
         client = self._get_thread_client()
         return self._extract_with_client(chunk, client)
 
-    def _extract_with_client(self, chunk: EvidenceChunk, client) -> list[Any]:
+    def _extract_with_client(self, chunk: EvidenceChunk, client) -> list[ExtractionResult]:
         """
         Core extraction logic — runs the retry loop using the supplied client.
 

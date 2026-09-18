@@ -1,0 +1,17 @@
+{
+  "name": "pecs-trace-graph",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "cytoscape": "3.30.4",
+    "streamlit-component-lib": "2.0.0"
+  },
+  "devDependencies": {
+    "vite": "6.3.5"
+  }
+}

@@ -103,8 +103,8 @@ class ExtractionValidator:
                 continue
 
             # Inject provenance fields
-            item.setdefault("source_document", source_document)
-            item.setdefault("chunk_id", chunk_id)
+            item["source_document"] = source_document
+            item["chunk_id"] = chunk_id
 
             try:
                 result = ExtractionResult.model_validate(item)

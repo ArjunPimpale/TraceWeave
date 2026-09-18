@@ -20,23 +20,16 @@ from typing import Any
 from pecs.config import settings
 from pecs.embeddings.embedder import Embedder
 from pecs.logging_config import get_logger
-from pecs.models.evidence_chunk import EvidenceChunk, SourceType
+from pecs.models.evidence_chunk import EvidenceChunk
 from pecs.models.retrieved_evidence import RetrievedEvidence
+from pecs.models.traceability import RetrievalOutcome
 from pecs.retrieval.bm25 import BM25Index
 from pecs.retrieval.merger import CandidateMerger
 from pecs.retrieval.metadata_filter import MetadataFilter
 from pecs.vectorstore.chroma_store import ChromaStore
+from pecs.vectorstore.chunk_codec import reconstruct_evidence_chunk
 
 logger = get_logger(__name__)
-
-# Patterns for requirement identifier variants
-# Matches: R3, Requirement 3, req-3, requirement_3, REQ3, etc.
-_REQ_ID_VARIANTS = [
-    r"\b{req}\b",                      # Exact: R3
-    r"\b[Rr]equirement\s*{num}\b",     # Requirement 3
-    r"\b[Rr]eq[-_]?{num}\b",           # req-3, req_3, REQ3
-]
-
 
 class RetrievalPipeline:
     """
@@ -82,6 +75,7 @@ class RetrievalPipeline:
             List of RetrievedEvidence sorted by combined_score descending.
         """
         top_k = top_k or settings.RETRIEVAL_TOP_K
+        self._last_vector_error = None
 
         logger.info(
             "Retrieval started",
@@ -126,6 +120,16 @@ class RetrievalPipeline:
 
         return merged
 
+    def retrieve_outcome(self, *args, **kwargs) -> RetrievalOutcome:
+        """Compatibility-preserving retrieval result with service availability."""
+        try:
+            self._chroma.count_strict()
+            candidates = self.retrieve(*args, **kwargs)
+            return RetrievalOutcome(candidates, self._last_vector_error,
+                                    getattr(self._bm25, "_bm25", None) is not None)
+        except Exception as exc:
+            return RetrievalOutcome([], str(exc), getattr(self._bm25, "_bm25", None) is not None)
+
     def _vector_retrieve(
         self,
         query_text: str,
@@ -144,6 +148,7 @@ class RetrievalPipeline:
                 where=where_filter,
             )
         except Exception as exc:
+            self._last_vector_error = str(exc)
             logger.error(
                 "Vector retrieval failed",
                 extra={"context": {"error": str(exc)}},
@@ -246,25 +251,7 @@ class RetrievalPipeline:
         chunk_id: str, doc_text: str, meta: dict[str, Any]
     ) -> EvidenceChunk:
         """Reconstruct an EvidenceChunk from ChromaDB query results."""
-        source_type_str = meta.get("source_type", "MARKDOWN")
-        try:
-            source_type = SourceType(source_type_str)
-        except ValueError:
-            source_type = SourceType.MARKDOWN
-
-        return EvidenceChunk(
-            chunk_id=chunk_id,
-            source_document=meta.get("source_document", ""),
-            source_hash=meta.get("source_hash", ""),
-            source_type=source_type,
-            chunk_index=meta.get("chunk_index", 0),
-            source_locator=meta.get("source_locator", ""),
-            normalized_text=doc_text,
-            char_count=len(doc_text),
-            metadata={k: v for k, v in meta.items()
-                      if k not in ("source_document", "source_type", "source_hash",
-                                   "chunk_index", "source_locator", "char_count", "created_at")},
-        )
+        return reconstruct_evidence_chunk(chunk_id, doc_text, meta)
 
     def rebuild_bm25_index(self, chunks: list[EvidenceChunk]) -> None:
         """

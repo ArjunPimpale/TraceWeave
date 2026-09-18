@@ -67,40 +67,19 @@ class CandidateMerger:
 
         for chunk, score in vector_results:
             cid = chunk.chunk_id
-            if cid not in candidates:
-                candidates[cid] = {
-                    "chunk": chunk,
-                    "vector_score": 0.0,
-                    "bm25_score": None,
-                    "id_match": False,
-                    "methods": [],
-                }
+            self._ensure_candidate(candidates, chunk)
             candidates[cid]["vector_score"] = score
             candidates[cid]["methods"].append("vector")
 
         for chunk, score in bm25_results:
             cid = chunk.chunk_id
-            if cid not in candidates:
-                candidates[cid] = {
-                    "chunk": chunk,
-                    "vector_score": 0.0,
-                    "bm25_score": None,
-                    "id_match": False,
-                    "methods": [],
-                }
+            self._ensure_candidate(candidates, chunk)
             candidates[cid]["bm25_score"] = score
             candidates[cid]["methods"].append("bm25")
 
         for chunk in id_match_results:
             cid = chunk.chunk_id
-            if cid not in candidates:
-                candidates[cid] = {
-                    "chunk": chunk,
-                    "vector_score": 0.0,
-                    "bm25_score": None,
-                    "id_match": False,
-                    "methods": [],
-                }
+            self._ensure_candidate(candidates, chunk)
             candidates[cid]["id_match"] = True
             if "id_match" not in candidates[cid]["methods"]:
                 candidates[cid]["methods"].append("id_match")
@@ -138,6 +117,20 @@ class CandidateMerger:
         )
 
         return results[:effective_top_k]
+
+    @staticmethod
+    def _ensure_candidate(candidates: dict[str, dict], chunk: EvidenceChunk) -> None:
+        """Initialize a candidate once while retaining the first chunk object."""
+        candidates.setdefault(
+            chunk.chunk_id,
+            {
+                "chunk": chunk,
+                "vector_score": 0.0,
+                "bm25_score": None,
+                "id_match": False,
+                "methods": [],
+            },
+        )
 
     def _compute_combined_score(
         self,

@@ -16,7 +16,7 @@ import streamlit as st
 
 from pecs.embeddings.embedder import Embedder
 from pecs.logging_config import get_logger
-from pecs.models.retrieved_evidence import RetrievedEvidence
+from pecs.models.traceability import RetrievalOutcome
 from pecs.retrieval.pipeline import RetrievalPipeline
 from pecs.store.evidence_repo import EvidenceRepo
 from pecs.traceability.matrix import MatrixBuilder
@@ -72,7 +72,7 @@ def _run_correlation(use_stage2: bool) -> None:
                 return
 
             # ── Step 1: Run retrieval pipeline for each requirement ────────
-            retrieval_candidates: dict[str, list[RetrievedEvidence]] = {}
+            retrieval_candidates: dict[int, RetrievalOutcome] = {}
 
             with st.spinner(f"Retrieving evidence for {len(requirements)} requirements…"):
                 pipeline = RetrievalPipeline()
@@ -80,20 +80,10 @@ def _run_correlation(use_stage2: bool) -> None:
                     req_id = req["entity_id"]
                     req_text = req.get("text", "")
                     if not req_text:
+                        retrieval_candidates[req["id"]] = RetrievalOutcome([], "Requirement has no text")
                         continue
-                    try:
-                        candidates = pipeline.retrieve(
-                            query_text=req_text,
-                            requirement_ids=[req_id],
-                            top_k=10,  # Retrieve top-10; rules will filter further
-                        )
-                        if candidates:
-                            retrieval_candidates[req_id] = candidates
-                    except Exception as exc:
-                        logger.warning(
-                            "Retrieval failed for requirement",
-                            extra={"context": {"req_id": req_id, "error": str(exc)}},
-                        )
+                    retrieval_candidates[req["id"]] = pipeline.retrieve_outcome(
+                        query_text=req_text, requirement_ids=[req_id], top_k=10)
 
             logger.info(
                 "Retrieval complete",
@@ -129,33 +119,11 @@ def _run_correlation(use_stage2: bool) -> None:
             st.caption(f"Resolved: {det_count} deterministic · {llm_count} via LLM")
 
             st.session_state.matrix_built = True
-            st.session_state.last_matrix = matrix
+            st.session_state.last_matrix = None
+            st.session_state.trace_run = matrix.run_id
+            st.session_state.graph_run_select = matrix.run_id
             st.info("Navigate to 📊 Traceability Matrix to view the full results.")
-
-            # ── Auto-sync graph (non-blocking) ────────────────────────────
-            from pecs.config import settings as _cfg
-            if _cfg.NEO4J_ENABLED:
-                try:
-                    from pecs.graph.graph_sync import GraphSync
-                    with st.spinner("Syncing evidence graph…"):
-                        sync_result = GraphSync().sync_graph()
-                    if sync_result.success:
-                        st.success(
-                            f"🕸️ Graph synced: {sync_result.nodes_created} nodes, "
-                            f"{sync_result.relationships_created} relationships"
-                        )
-                        st.session_state.graph_synced = True
-                        st.session_state.graph_sync_result = sync_result.to_dict()
-                    else:
-                        st.warning(
-                            f"⚠️ Graph sync failed (non-blocking): {sync_result.error}"
-                        )
-                except Exception as graph_exc:
-                    st.warning(
-                        f"⚠️ Graph sync skipped (Neo4j unavailable): {graph_exc}"
-                    )
 
         except Exception as exc:
             st.error(f"Correlation pipeline failed: {exc}")
             logger.error("Correlation pipeline error", extra={"context": {"error": str(exc)}})
-

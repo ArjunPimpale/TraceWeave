@@ -20,6 +20,30 @@ from pecs.store.database import Database, get_database
 logger = get_logger(__name__)
 
 
+_INSERT_CORRELATION_SQL = """
+    INSERT INTO correlation
+        (correlation_id, requirement_entity_id, evidence_entity_id,
+         status, resolution_method, rule_name, confidence,
+         supporting_chunk_ids, reasoning)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+
+def _insert_params(result: CorrelationResult) -> tuple[Any, ...]:
+    """Return the correlation-table values in the schema's insertion order."""
+    return (
+        result.correlation_id,
+        result.requirement_entity_id,
+        result.evidence_entity_id,
+        result.status.value,
+        result.resolution_method,
+        result.rule_name,
+        result.confidence,
+        json.dumps(result.supporting_chunk_ids),
+        result.reasoning,
+    )
+
+
 class CorrelationRepo:
     """
     Repository for the correlation table.
@@ -46,27 +70,7 @@ class CorrelationRepo:
         Returns:
             The auto-generated row id.
         """
-        sql = """
-            INSERT INTO correlation
-                (correlation_id, requirement_entity_id, evidence_entity_id,
-                 status, resolution_method, rule_name, confidence,
-                 supporting_chunk_ids, reasoning)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-        cursor = self._conn.execute(
-            sql,
-            (
-                result.correlation_id,
-                result.requirement_entity_id,
-                result.evidence_entity_id,
-                result.status.value,
-                result.resolution_method,
-                result.rule_name,
-                result.confidence,
-                json.dumps(result.supporting_chunk_ids),
-                result.reasoning,
-            ),
-        )
+        cursor = self._conn.execute(_INSERT_CORRELATION_SQL, _insert_params(result))
         self._conn.commit()
         row_id = cursor.lastrowid
         logger.debug(
@@ -86,30 +90,9 @@ class CorrelationRepo:
         Returns:
             Number of rows inserted.
         """
-        sql = """
-            INSERT INTO correlation
-                (correlation_id, requirement_entity_id, evidence_entity_id,
-                 status, resolution_method, rule_name, confidence,
-                 supporting_chunk_ids, reasoning)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
         with self._conn:
             self._conn.executemany(
-                sql,
-                [
-                    (
-                        r.correlation_id,
-                        r.requirement_entity_id,
-                        r.evidence_entity_id,
-                        r.status.value,
-                        r.resolution_method,
-                        r.rule_name,
-                        r.confidence,
-                        json.dumps(r.supporting_chunk_ids),
-                        r.reasoning,
-                    )
-                    for r in results
-                ],
+                _INSERT_CORRELATION_SQL, [_insert_params(result) for result in results]
             )
         logger.info(
             "Batch correlation insert complete",

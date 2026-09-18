@@ -76,14 +76,6 @@ class PecsSettings(BaseSettings):
     # ── Hallucination detection ───────────────────────────────────────────────
     MIN_WORD_OVERLAP_RATIO: float = 0.30
 
-    # ── Neo4j graph database ─────────────────────────────────────────────────
-    # Local Community Edition — no authentication by default.
-    # Set NEO4J_ENABLED=false to run PECS without Neo4j installed.
-    NEO4J_URI: str = "neo4j://localhost:7687"
-    NEO4J_DATABASE: str = "neo4j"
-    NEO4J_ENABLED: bool = True
-    # EXTENSION POINT: Add NEO4J_USER / NEO4J_PASSWORD here when auth is needed.
-
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

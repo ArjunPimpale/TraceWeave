@@ -12,6 +12,7 @@ import streamlit as st
 from pecs.extraction.extractor import Extractor
 from pecs.logging_config import get_logger
 from pecs.store.evidence_repo import EvidenceRepo
+from pecs.vectorstore.chunk_codec import reconstruct_evidence_chunk
 from pecs.vectorstore.chroma_store import ChromaStore
 
 logger = get_logger(__name__)
@@ -56,7 +57,6 @@ def render() -> None:
 def _run_extraction(repo: EvidenceRepo) -> None:
     """Run Stage 1 extraction on all ChromaDB chunks using concurrent workers."""
     from pecs.vectorstore.chroma_store import ChromaStore
-    from pecs.models.evidence_chunk import EvidenceChunk, SourceType
     from pecs.config import settings
 
     chroma = ChromaStore()
@@ -68,31 +68,17 @@ def _run_extraction(repo: EvidenceRepo) -> None:
         st.warning("No chunks to extract.")
         return
 
-    # Get all chunks via a broad query
-    all_data = chroma._get_collection().get(include=["documents", "metadatas"])
+    all_data = chroma.get_all_records()
     chunk_ids = all_data.get("ids", [])
     documents = all_data.get("documents", [])
     metadatas = all_data.get("metadatas", [])
 
-    # Reconstruct EvidenceChunks
-    chunks = []
-    for cid, doc_text, meta in zip(chunk_ids, documents, metadatas):
-        source_type_str = meta.get("source_type", "MARKDOWN")
-        try:
-            source_type = SourceType(source_type_str)
-        except ValueError:
-            source_type = SourceType.MARKDOWN
-
-        chunks.append(EvidenceChunk(
-            chunk_id=cid,
-            source_document=meta.get("source_document", ""),
-            source_hash=meta.get("source_hash", ""),
-            source_type=source_type,
-            chunk_index=meta.get("chunk_index", 0),
-            source_locator=meta.get("source_locator", ""),
-            normalized_text=doc_text,
-            char_count=len(doc_text),
-        ))
+    chunks = [
+        reconstruct_evidence_chunk(
+            cid, doc_text, meta, include_extra_metadata=False
+        )
+        for cid, doc_text, meta in zip(chunk_ids, documents, metadatas)
+    ]
 
     n_workers = settings.EXTRACTION_WORKERS
     st.info(

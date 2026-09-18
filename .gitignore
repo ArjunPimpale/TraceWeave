@@ -8,6 +8,9 @@ __pycache__/
 .Python
 build/
 dist/
+!pecs/ui/components/trace_graph_frontend/dist/
+!pecs/ui/components/trace_graph_frontend/dist/**
+pecs/ui/components/trace_graph_frontend/node_modules/
 *.egg-info/
 .eggs/
 *.egg
@@ -20,12 +23,13 @@ ENV/
 
 # Environment variables
 .env
+.env.*
 !.env.example
 
 # Data directories — never commit runtime data
-data/chromadb/
-data/sqlite/
-data/logs/
+/data/chromadb/
+/data/sqlite/
+/data/logs/
 
 # IDE
 .vscode/
@@ -34,17 +38,19 @@ data/logs/
 *.swo
 .DS_Store
 
-# Streamlit
-.streamlit/
+# Streamlit local secrets
+.streamlit/secrets.toml
 
 # pytest
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
+.ruff_cache/
+.mypy_cache/
 
 # uv
 .uv/
-uv.lock
 
-# User Defined
-evidence/
+# Local evidence corpus
+/evidence/

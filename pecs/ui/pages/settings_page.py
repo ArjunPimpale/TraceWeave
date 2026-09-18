@@ -135,6 +135,7 @@ def _render_data_management() -> None:
         st.markdown("- All correlations in SQLite")
         st.markdown("- All ingestion log entries")
         st.markdown("- All vectors in ChromaDB")
+        st.markdown("- All saved traceability runs and citation snapshots")
 
         confirm = st.checkbox("I understand this will delete all data permanently")
         if confirm and st.button("🗑️ Reset All Data", type="secondary"):
@@ -145,16 +146,27 @@ def _render_data_management() -> None:
                 db = get_database()
                 conn = db.connect()
                 with conn:
+                    for table in (
+                        "traceability_run_candidate", "traceability_run_requirement",
+                        "correlation_reference", "correlation_context", "traceability_run_chunk",
+                        "traceability_run", "chunk_snapshot",
+                    ):
+                        conn.execute(f"DELETE FROM {table}")
                     conn.execute("DELETE FROM evidence")
                     conn.execute("DELETE FROM correlation")
                     conn.execute("DELETE FROM ingestion_log")
-
-                chroma = ChromaStore()
-                chroma.reset_collection()
+                    import uuid
+                    conn.execute("UPDATE traceability_dataset SET uuid=? WHERE id=1", (str(uuid.uuid4()),))
 
                 st.session_state.matrix_built = False
                 st.session_state.last_matrix = None
+                st.session_state.trace_run = None
+                st.session_state.pop("graph_run_select", None)
+                st.session_state.trace_selection = None
                 st.session_state.ingestion_results = []
+
+                chroma = ChromaStore()
+                chroma.reset_collection()
 
                 st.success("✅ All data deleted successfully.")
             except Exception as exc:

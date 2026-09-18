@@ -150,6 +150,8 @@ class Database:
             conn.execute(INGESTION_TABLE_DDL)
             for idx_ddl in INDEXES_DDL + INGESTION_INDEX_DDL:
                 conn.execute(idx_ddl)
+        from pecs.store.migrations import migrate
+        migrate(conn)
         logger.info(
             "SQLite schema initialized",
             extra={"context": {"path": str(self._db_path)}},
