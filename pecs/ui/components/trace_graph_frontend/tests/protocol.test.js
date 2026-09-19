@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { validEvent } from "../src/protocol.js";
+import { openLayoutOptions } from "../src/layout.js";
 
 const payload = { snapshot_key: "dataset:run", view_key: "focused", nodes: [{ id: "ev:1" }],
   edges: [{ id: "edge:1" }] };
@@ -22,4 +23,13 @@ test("rejects stale, unknown, and unsupported events", () => {
   assert.equal(validEvent({ ...base, target_id: "ev:other" }, payload), false);
   assert.equal(validEvent({ ...base, action: "expand_group" }, payload), false);
   assert.equal(validEvent({ ...base, event_id: 3 }, payload), false);
+});
+
+test("the opening layout randomizes nodes and pushes them apart", () => {
+  const layout = openLayoutOptions();
+  assert.equal(layout.name, "cose");
+  assert.equal(layout.randomize, true);
+  assert.equal(layout.fit, true);
+  assert.ok(layout.nodeRepulsion >= 10000);
+  assert.ok(layout.idealEdgeLength >= 100);
 });

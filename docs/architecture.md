@@ -43,7 +43,10 @@ members in 20-item increments, and full-text evidence search can inspect items
 outside the current canvas limit.
 Moving from evidence to an associated requirement records the prior Graph view,
 so Back restores its filters and selection. Canvas selections highlight the
-selected item and its direct connections without a layout reset.
+selected item and its direct connections without a layout reset. Canvas-local
+Recenter and Spread out controls recover a panned or zoomed view and rerun a
+randomized, repulsive COSE layout without rerunning the Streamlit page. The
+opening layout also runs automatically when a new bounded graph view loads.
 
 Welcome to this deep dive into **PECS** (Project Evidence Correlation System). You are reading this because you want to master the architecture, design decisions, and data flow of this local-first, privacy-preserving traceability engine. 
 

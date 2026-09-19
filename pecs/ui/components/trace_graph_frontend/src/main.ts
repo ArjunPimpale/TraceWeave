@@ -1,6 +1,7 @@
 import cytoscape from "cytoscape";
 import { Streamlit } from "streamlit-component-lib";
 import { validEvent } from "./protocol.js";
+import { openLayoutOptions } from "./layout.js";
 import "./style.css";
 
 type CanvasNode = { id: string; title: string; kind: string; status?: string; x: number; y: number };
@@ -11,6 +12,22 @@ type Payload = { snapshot_key: string; view_key: string; nodes: CanvasNode[];
 let cy: cytoscape.Core | undefined;
 let lastView: string | undefined;
 let lastSelection: string | undefined;
+
+const recenterButton = document.getElementById("recenter") as HTMLButtonElement;
+const spreadButton = document.getElementById("spread") as HTMLButtonElement;
+
+function recenterGraph() {
+  if (!cy || cy.nodes().empty()) return;
+  cy.animate({ fit: { eles: cy.elements(), padding: 70 } }, { duration: 250 });
+}
+
+function spreadGraph() {
+  if (!cy || cy.nodes().length < 2) return;
+  cy.layout(openLayoutOptions()).run();
+}
+
+recenterButton.addEventListener("click", recenterGraph);
+spreadButton.addEventListener("click", spreadGraph);
 
 function highlight(selection: string) {
   if (!cy) return;
@@ -86,6 +103,7 @@ function onRender(event: CustomEvent<{ args: { payload: Payload } }>) {
       { selector: ".dimmed", style: { "opacity": 0.18 } }
     ]
   });
+  spreadButton.disabled = payload.nodes.length < 2;
   cy.on("tap", "node, edge", e => {
     const message = { event_id: crypto.randomUUID(), snapshot_key:payload.snapshot_key,
       view_key:payload.view_key, action:e.target.isNode() ? "select_node" : "select_edge",
@@ -104,6 +122,11 @@ function onRender(event: CustomEvent<{ args: { payload: Payload } }>) {
   lastSelection = selection;
   if (selection) cy.getElementById(selection).select();
   highlight(selection);
+  if (payload.nodes.length > 1) {
+    // Open every new graph view automatically. Selection-only rerenders reuse
+    // the existing Cytoscape instance and therefore do not restart the layout.
+    cy.layout(openLayoutOptions()).run();
+  }
   Streamlit.setFrameHeight(600);
 }
 
